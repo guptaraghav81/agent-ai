@@ -254,8 +254,11 @@ TOOLS = [
         "function": {
             "name": "get_team_vs_team",
             "description": (
-                "Get head-to-head record between two IPL teams. "
-                "Use for 'MI vs CSK', 'KKR vs RCB all time', 'RR vs SRH in 2023'."
+                "Get head-to-head win/loss record between exactly two named IPL teams. "
+                "ONLY use when the question explicitly names two teams and asks for their record, "
+                "e.g. 'MI vs CSK head to head', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
+                "Do NOT use for questions about who won a tournament, championship, or title — "
+                "use get_titles for that. Do NOT use when only one team is mentioned."
             ),
             "parameters": {
                 "type": "object",
@@ -304,7 +307,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_titles",
-            "description": "Get IPL title count by team — all-time championship history.",
+            "description": (
+                "Get IPL title/championship count by team — all-time history. "
+                "Use for 'who won the first IPL', 'which team has most titles', "
+                "'IPL champions list', 'who won IPL 2008', 'IPL trophy winners', "
+                "'most successful team', 'how many titles has MI won'."
+            ),
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -315,26 +323,40 @@ TOOLS = [
 
 def _execute_tool(name: str, args: dict) -> dict:
     """Call the appropriate data_loader function and return structured result."""
+    # Groq sometimes sends n as a string — coerce to int defensively
+    if "n" in args:
+        try:
+            args["n"] = int(args["n"])
+        except (ValueError, TypeError):
+            args["n"] = 5
     try:
         if name == "get_career_leaderboard":
+            n = args.get("n", 5)
             rows = dl.get_career_leaderboard(
                 stat=args["stat"],
                 prefix=args.get("prefix", "IPL"),
-                n=args.get("n", 5)
+                n=n
             )
-            return {"rows": rows, "stat": args["stat"], "prefix": args.get("prefix","IPL")}
+            result = {"rows": rows, "stat": args["stat"], "prefix": args.get("prefix","IPL")}
+            if n == 1 and rows:
+                result["winner"] = rows[0]
+            return result
 
         elif name == "get_season_leaderboard":
+            n = args.get("n", 5)
             rows = dl.get_season_leaderboard(
                 stat=args["stat"],
                 season=args["season"],
                 competition=args.get("competition", "IPL"),
                 phase=args.get("phase", "ALL"),
-                n=args.get("n", 5)
+                n=n
             )
-            return {"rows": rows, "stat": args["stat"], "season": args["season"],
+            result = {"rows": rows, "stat": args["stat"], "season": args["season"],
                     "competition": args.get("competition","IPL"),
                     "phase": args.get("phase","ALL")}
+            if n == 1 and rows:
+                result["winner"] = rows[0]
+            return result
 
         elif name == "get_player_career_stats":
             stats = dl.get_player_stats(args["player"], args.get("prefix","IPL"))
@@ -421,6 +443,93 @@ def _execute_tool(name: str, args: dict) -> dict:
 
 # ── Chart data extractor ───────────────────────────────────────────────────────
 
+def _format_tool_result_readable(result: dict) -> str:
+    """Convert tool result to a human-readable string Groq can directly copy from."""
+    if "error" in result:
+        return f"ERROR: {result['error']}"
+
+    if "rows" in result and result["rows"]:
+        rows  = result["rows"]
+        stat  = result.get("stat","value")
+        season= result.get("season","")
+        comp  = result.get("competition","")
+        phase = result.get("phase","ALL")
+        prefix= result.get("prefix","")
+        ctx   = f"{comp} {season} {prefix}".strip() + (f" ({phase})" if phase != "ALL" else "")
+        lines = [f"Top {len(rows)} by {stat} — {ctx}:"]
+        for r in rows:
+            lines.append(f"  {r['rank']}. {r['player']} — {r['value']} {stat}")
+        if "winner" in result:
+            w = result["winner"]
+            lines.append(f"WINNER: {w['player']} with {w['value']} {stat}")
+        return "\n".join(lines)
+
+    if "matchup" in result:
+        m = result["matchup"]
+        return (
+            f"MATCHUP — {m['batter']} vs {m['bowler']} in {m['competition']} {m['phase']}:\n"
+            f"  Balls: {m['balls']}, Runs: {m['runs']}, Dismissed: {m['dismissed']}, "
+            f"SR: {m.get('sr','N/A')}, Dot%: {m.get('dot_pct','N/A')}, "
+            f"Dismiss rate: {m.get('dismiss_rate','N/A')}"
+        )
+
+    if "weak_against" in result:
+        batter = result.get("batter","")
+        lines  = [f"Bowlers who trouble {batter} most ({result.get('competition','')} {result.get('phase','')}):"]
+        for r in result.get("weak_against", []):
+            lines.append(f"  {r['bowler_display']} — {r['balls']} balls, {r['dismissed']} dismissals, SR {r['sr']}")
+        lines.append(f"\nBowlers {batter} dominates:")
+        for r in result.get("dominates", []):
+            lines.append(f"  {r['bowler_display']} — {r['balls']} balls, {r['dismissed']} dismissals, SR {r['sr']}")
+        return "\n".join(lines)
+
+    if "stats" in result:
+        s   = result["stats"]
+        pfx = result.get("prefix","")
+        lines = [f"PLAYER STATS — {s.get('name','')} ({pfx}):"]
+        for k, v in s.items():
+            if k not in ("name","unique_name","nation","ipl_ever") and v is not None:
+                lines.append(f"  {k}: {v}")
+        return "\n".join(lines)
+
+    if "standings" in result:
+        lines = ["IPL 2026 STANDINGS:"]
+        for r in result["standings"]:
+            lines.append(f"  {r['position']}. {r['team']} — {r['points']} pts, NRR {r['nrr']}")
+        return "\n".join(lines)
+
+    if "titles" in result:
+        lines = ["IPL TITLES:"]
+        for r in result["titles"]:
+            if r["titles"] > 0:
+                lines.append(f"  {r['team']}: {r['titles']} title(s)")
+        return "\n".join(lines)
+
+    if "team1" in result:
+        return (
+            f"HEAD TO HEAD — {result['team1']} vs {result['team2']} ({result.get('competition','')}):\n"
+            f"  Total matches: {result['matches']}\n"
+            f"  {result['team1']} wins: {result['team1_wins']}\n"
+            f"  {result['team2']} wins: {result['team2_wins']}\n"
+            f"  No result: {result.get('no_result',0)}"
+        )
+
+    if "batting" in result or "bowling" in result:
+        name  = result.get("name","")
+        venue = result.get("venue_query","")
+        lines = [f"VENUE STATS — {name} at {venue}:"]
+        if "batting" in result:
+            b = result["batting"]
+            lines.append(f"  Batting: {b.get('innings',0)} innings, {b.get('runs',0)} runs, avg {b.get('avg','N/A')}, SR {b.get('sr','N/A')}")
+        if "bowling" in result:
+            b = result["bowling"]
+            lines.append(f"  Bowling: {b.get('wickets',0)} wickets, econ {b.get('economy','N/A')}, avg {b.get('bowl_avg','N/A')}")
+        return "\n".join(lines)
+
+    # Fallback
+    return json.dumps(result)
+
+
 def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
     """Build chart_title and chart_data from tool result."""
     if "rows" in tool_result and tool_result["rows"]:
@@ -476,25 +585,19 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
     return "", []
 
 
-# ── Model config ───────────────────────────────────────────────────────────────
-# llama-3.3-70b is capable but occasionally generates malformed tool JSON.
-# On retry we use the same model — the malformed JSON is usually transient.
-_MODEL_TOOL  = "llama-3.3-70b-versatile"   # used for tool-calling rounds
-_MODEL_TEXT  = "llama-3.3-70b-versatile"   # used for final answer formatting
-
 # ── System prompt ──────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are AskSportsFan360, a cricket analytics assistant with access to a real ball-by-ball database covering IPL 2008–2026, all T20 Internationals, BBL, PSL, SA20, CPL and more.
+SYSTEM_PROMPT = """You are AskSportsFan360, a cricket analytics assistant backed by a real ball-by-ball database.
 
-STRICT ANTI-HALLUCINATION RULES:
-1. ONLY use numbers returned by tool calls. NEVER recall, estimate, or fabricate statistics.
-2. If a tool returns an error or empty data, say "I don't have data for that" — never guess.
-3. Always mention the competition, season, and phase when reporting stats.
-4. You MAY call multiple tools to answer a single question fully.
-5. For open-ended knowledge questions (history, rules, format, trivia) where no tool applies, answer from your training knowledge but add "Note: this is general knowledge, not from our live database."
-6. Do not discuss non-cricket topics.
-7. Keep answers concise and clear. Use ** for bold key numbers and names.
-8. When reporting matchup stats always mention balls faced — small samples need context.
+ABSOLUTE RULES — these override everything:
+1. You MUST ONLY report numbers and names that appear VERBATIM in the tool result. Copy them exactly.
+2. You MUST NOT use your training knowledge for any statistic, ranking, or player name.
+3. You MUST NOT reorder, modify, or supplement the tool result with recalled facts.
+4. If tool result has rows, report them IN THAT EXACT ORDER with THOSE EXACT NUMBERS.
+5. If tool returns empty or error, say "I don't have data for that" — never fill the gap.
+6. For knowledge questions (rules, history, trivia) with no tool result, answer freely but say "Note: general knowledge, not from live database."
+7. Keep answers concise. Bold key numbers and names with **.
+8. For matchup answers always state the number of balls — context matters for small samples.
 """
 
 
@@ -530,7 +633,7 @@ def ask(question: str):
     for attempt in range(2):
         try:
             response = groq_client.chat.completions.create(
-                model=_MODEL_TOOL,
+                model="llama-3.3-70b-versatile",
                 messages=messages,
                 tools=TOOLS,
                 tool_choice="auto",
@@ -542,10 +645,10 @@ def ask(question: str):
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
             if attempt == 1 or "tool_use_failed" not in err_str:
-                # Non-retryable error or out of retries — fall back to knowledge answer
+                # Non-retryable or out of retries — fall back to plain answer
                 try:
                     fallback = groq_client.chat.completions.create(
-                        model=_MODEL_TOOL,
+                        model="llama-3.3-70b-versatile",
                         messages=messages,
                         temperature=0.1,
                         max_tokens=600,
@@ -602,24 +705,39 @@ def ask(question: str):
         ]
     })
 
+    # Format tool results as readable text AND raw JSON — double signal to Groq
+    formatted_results = []
     for tr in tool_results:
+        result = tr["result"]
+        readable = _format_tool_result_readable(result)
         messages.append({
             "role":         "tool",
             "tool_call_id": tr["tool_call_id"],
-            "content":      json.dumps(tr["result"]),
+            "content":      json.dumps(result),
         })
+        formatted_results.append(readable)
+
+    # Hard instruction injected as a user message right before Round 2
+    # This is the most effective way to force compliance in llama models
+    hard_instruction = (
+        "IMPORTANT: The tool results above contain the EXACT data from our database. "
+        "You MUST report ONLY the players and numbers shown in the tool results, "
+        "in the EXACT ORDER they appear. Do NOT use your training knowledge. "
+        "Do NOT reorder or change any numbers. Here is the data you must use:\n\n"
+        + "\n\n".join(formatted_results)
+    )
+    messages.append({"role": "user", "content": hard_instruction})
 
     try:
         response2 = groq_client.chat.completions.create(
             model=_MODEL_TOOL,
             messages=messages,
-            temperature=0.1,
+            temperature=0.0,
             max_tokens=600,
         )
         answer = response2.choices[0].message.content.strip()
     except Exception as e:
         print(f"Groq round 2 error: {e}")
-        # Fall back to raw tool result summary
         answer = "I retrieved the data but had trouble formatting the answer. Please try again."
 
     save_context(question, answer)
@@ -693,7 +811,7 @@ def match_commentary(team1: str, team2: str, status: str):
     prompt = f"Match: {team1} vs {team2}\nStatus: {status}\nGive short live commentary in 2-3 lines."
     try:
         res = groq_client.chat.completions.create(
-            model=_MODEL_TOOL,
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": "You are a professional cricket commentator."},
                 {"role": "user",   "content": prompt},
