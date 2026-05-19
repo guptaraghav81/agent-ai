@@ -139,6 +139,68 @@ def load():
             if u in _display_map)
     )
 
+    # ── Manual aliases for common full names Groq generates ───────────────────
+    # Groq often uses full first names not in Cricsheet short format
+    _MANUAL_ALIASES = {
+        "sunil narine":       "SP Narine",
+        "sunil philip narine":"SP Narine",
+        "jasprit bumrah":     "JJ Bumrah",
+        "virat kohli":        "V Kohli",
+        "rohit sharma":       "RG Sharma",
+        "ms dhoni":           "MS Dhoni",
+        "mahendra singh dhoni":"MS Dhoni",
+        "kl rahul":           "KL Rahul",
+        "shubman gill":       "S Gill",
+        "hardik pandya":      "HH Pandya",
+        "ravindra jadeja":    "RA Jadeja",
+        "yuzvendra chahal":   "YS Chahal",
+        "bhuvneshwar kumar":  "B Kumar",
+        "mohammed shami":     "Mohammed Shami",
+        "mohammed siraj":     "Mohammed Siraj",
+        "ravichandran ashwin":"R Ashwin",
+        "shreyas iyer":       "SS Iyer",
+        "rishabh pant":       "RR Pant",
+        "david warner":       "DA Warner",
+        "kane williamson":    "KS Williamson",
+        "jos buttler":        "JC Buttler",
+        "rashid khan":        "Rashid Khan",
+        "chris gayle":        "CH Gayle",
+        "ab de villiers":     "AB de Villiers",
+        "ab devilliers":      "AB de Villiers",
+        "faf du plessis":     "F du Plessis",
+        "quinton de kock":    "Q de Kock",
+        "andre russell":      "AD Russell",
+        "pollard":            "KA Pollard",
+        "kieron pollard":     "KA Pollard",
+        "josh hazlewood":     "JR Hazlewood",
+        "trent boult":        "TA Boult",
+        "pat cummins":        "PJ Cummins",
+        "mitchell starc":     "MA Starc",
+        "sam curran":         "SM Curran",
+        "liam livingstone":   "LS Livingstone",
+        "jonny bairstow":     "JM Bairstow",
+        "ben stokes":         "BA Stokes",
+        "mark wood":          "MA Wood",
+        "nicholas pooran":    "N Pooran",
+        "ishan kishan":       "IK Kishan",
+        "sanju samson":       "SV Samson",
+        "prithvi shaw":       "PP Shaw",
+        "axar patel":         "AR Patel",
+        "washington sundar":  "W Sundar",
+    }
+    for alias, cricsheet_name in _MANUAL_ALIASES.items():
+        # Find the unique_name for this cricsheet short name
+        match = registry_df[registry_df["unique_name"].str.contains(
+            cricsheet_name.replace(" ", ".*"), case=False, na=False, regex=True
+        )]
+        if not match.empty:
+            _player_index[alias] = match.iloc[0]["unique_name"]
+        else:
+            # Try direct lookup in existing index
+            existing = _player_index.get(cricsheet_name.lower())
+            if existing:
+                _player_index[alias] = existing
+
     _loaded = True
     print(f"Data layer ready — {len(_player_names):,} players indexed")
 

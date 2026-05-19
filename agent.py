@@ -45,10 +45,12 @@ TOOLS = [
         "function": {
             "name": "get_career_leaderboard",
             "description": (
-                "Get the top N players by a career stat. Use for questions like "
-                "'most IPL runs', 'best T20I economy', 'most Overall sixes', "
-                "'best IPL26 bowling average', 'top form batters 2025'. "
-                "prefix options: IPL | T20I | IPL26 | Overall | 2025"
+                "Get the top N players by a CAREER stat across all seasons. "
+                "Use ONLY for all-time leaderboards with no specific year: "
+                "'most IPL runs all time', 'best T20I economy ever', 'most Overall sixes'. "
+                "prefix: IPL=career IPL, T20I=career T20I, IPL26=IPL 2026 season only, Overall=all T20s. "
+                "NEVER use for questions mentioning a specific year like 2025, 2016, 2019 — "
+                "use get_season_leaderboard for those instead."
             ),
             "parameters": {
                 "type": "object",
@@ -61,8 +63,8 @@ TOOLS = [
                     },
                     "prefix": {
                         "type": "string",
-                        "enum": ["IPL","T20I","IPL26","Overall","2025"],
-                        "description": "Competition/period context. Use IPL26 for current 2026 season, 2025 for 2025 form window. For a specific historical season year use get_season_leaderboard instead."
+                        "enum": ["IPL","T20I","IPL26","Overall"],
+                        "description": "IPL=all-time IPL, T20I=all-time T20I, IPL26=2026 season only, Overall=all T20s. For any specific year use get_season_leaderboard."
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -315,7 +317,6 @@ TOOLS = [
 
 def _execute_tool(name: str, args: dict) -> dict:
     """Call the appropriate data_loader function and return structured result."""
-    # Tools with no parameters (get_titles, get_standings) send args=None
     if args is None:
         args = {}
     # Groq sometimes sends n as a string — coerce to int defensively
@@ -554,7 +555,7 @@ def _build_answer(question: str, tool_results: list) -> str:
         if "rows" in r:
             rows = r["rows"]
             if not rows:
-                parts.append("I don't have data for that season/competition.")
+                parts.append("I don't have data for that season or competition.")
                 continue
             stat   = r.get("stat", "value")
             season = r.get("season", "")
@@ -846,23 +847,19 @@ def ask(question: str):
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
 
-            # Try to salvage tool call from the failed_generation string
+            # On second failure, try to salvage the tool call from failed_generation
             if attempt == 1 and "failed_generation" in err_str:
                 try:
                     import re as _re
-                    # Extract function name and args from malformed generation
-                    m = _re.search(r"<function=(\w+)[({>](.+?)[)}]?</function>", err_str, _re.DOTALL)
+                    m = _re.search(r'<function=(\w+)[({>](.*?)[)}]?</function>', err_str, _re.DOTALL)
                     if m:
                         fn_name = m.group(1)
-                        fn_args_str = m.group(2).strip()
-                        # Clean up args string and parse
-                        fn_args_str = fn_args_str.strip("()")
+                        fn_args_str = m.group(2).strip().strip("()")
                         fn_args = json.loads(fn_args_str)
                         print(f"Salvaged tool call: {fn_name}({fn_args})")
                         result = _execute_tool(fn_name, fn_args)
                         if "error" not in result:
-                            if not chart_title:
-                                chart_title, chart_data = _extract_chart(fn_name, result)
+                            chart_title, chart_data = _extract_chart(fn_name, result)
                             answer = _build_answer(question, [{"tool_name": fn_name, "result": result}])
                             save_context(question, answer)
                             return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
@@ -870,7 +867,6 @@ def ask(question: str):
                     print(f"Salvage failed: {salvage_err}")
 
             if attempt == 1 or "tool_use_failed" not in err_str:
-                # Non-retryable or out of retries — fall back to plain answer
                 try:
                     fallback = groq_client.chat.completions.create(
                         model=_MODEL_TOOL,
