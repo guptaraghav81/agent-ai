@@ -62,12 +62,7 @@ TOOLS = [
                     "prefix": {
                         "type": "string",
                         "enum": ["IPL","T20I","IPL26","Overall","2025"],
-                        "description": "Competition/period context"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
+                        "description": "Competition/period context. Use IPL26 for current 2026 season, 2025 for 2025 form window. For a specific historical season year use get_season_leaderboard instead."
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -107,11 +102,6 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -325,6 +315,9 @@ TOOLS = [
 
 def _execute_tool(name: str, args: dict) -> dict:
     """Call the appropriate data_loader function and return structured result."""
+    # Tools with no parameters (get_titles, get_standings) send args=None
+    if args is None:
+        args = {}
     # Groq sometimes sends n as a string — coerce to int defensively
     if "n" in args:
         try:
@@ -554,12 +547,15 @@ def _build_answer(question: str, tool_results: list) -> str:
         name = tr["tool_name"]
 
         if "error" in r:
-            parts.append(f"I don't have data for that: {r['error']}")
+            parts.append("I don't have data for that.")
             continue
 
         # ── Leaderboard ───────────────────────────────────────────────────────
-        if "rows" in r and r["rows"]:
-            rows   = r["rows"]
+        if "rows" in r:
+            rows = r["rows"]
+            if not rows:
+                parts.append("I don't have data for that season/competition.")
+                continue
             stat   = r.get("stat", "value")
             season = r.get("season", "")
             comp   = r.get("competition", "")
@@ -849,11 +845,35 @@ def ask(question: str):
         except Exception as e:
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
+
+            # Try to salvage tool call from the failed_generation string
+            if attempt == 1 and "failed_generation" in err_str:
+                try:
+                    import re as _re
+                    # Extract function name and args from malformed generation
+                    m = _re.search(r"<function=(\w+)[({>](.+?)[)}]?</function>", err_str, _re.DOTALL)
+                    if m:
+                        fn_name = m.group(1)
+                        fn_args_str = m.group(2).strip()
+                        # Clean up args string and parse
+                        fn_args_str = fn_args_str.strip("()")
+                        fn_args = json.loads(fn_args_str)
+                        print(f"Salvaged tool call: {fn_name}({fn_args})")
+                        result = _execute_tool(fn_name, fn_args)
+                        if "error" not in result:
+                            if not chart_title:
+                                chart_title, chart_data = _extract_chart(fn_name, result)
+                            answer = _build_answer(question, [{"tool_name": fn_name, "result": result}])
+                            save_context(question, answer)
+                            return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
+                except Exception as salvage_err:
+                    print(f"Salvage failed: {salvage_err}")
+
             if attempt == 1 or "tool_use_failed" not in err_str:
                 # Non-retryable or out of retries — fall back to plain answer
                 try:
                     fallback = groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
+                        model=_MODEL_TOOL,
                         messages=messages,
                         temperature=0.1,
                         max_tokens=600,
