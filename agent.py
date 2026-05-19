@@ -61,11 +61,6 @@ TOOLS = [
                         "type": "string",
                         "enum": ["IPL","T20I","IPL26","Overall","2025"],
                         "description": "Competition/period context"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -105,11 +100,6 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -242,8 +232,7 @@ TOOLS = [
                         "enum": ["runs","avg","sr","sixes","wickets","economy","bowl_avg"],
                         "description": "Stat to rank by. Default runs",
                         "default": "runs"
-                    },
-                    "n": {"type": "integer", "default": 5}
+                    }
                 },
                 "required": ["venue"]
             }
@@ -254,8 +243,11 @@ TOOLS = [
         "function": {
             "name": "get_team_vs_team",
             "description": (
-                "Get head-to-head record between two IPL teams. "
-                "Use for 'MI vs CSK', 'KKR vs RCB all time', 'RR vs SRH in 2023'."
+                "Get head-to-head win/loss record between exactly two named IPL teams. "
+                "ONLY use when the question explicitly names two teams and asks for their record, "
+                "e.g. 'MI vs CSK head to head', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
+                "Do NOT use for questions about who won a tournament, championship, or title — "
+                "use get_titles for that. Do NOT use when only one team is mentioned."
             ),
             "parameters": {
                 "type": "object",
@@ -304,7 +296,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_titles",
-            "description": "Get IPL title count by team — all-time championship history.",
+            "description": (
+                "Get IPL title/championship count by team — all-time history. "
+                "Use for 'who won the first IPL', 'which team has most titles', "
+                "'IPL champions list', 'who won IPL 2008', 'IPL trophy winners', "
+                "'most successful team', 'how many titles has MI won'."
+            ),
             "parameters": {"type": "object", "properties": {}}
         }
     },
