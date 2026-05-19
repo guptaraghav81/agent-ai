@@ -28,6 +28,8 @@ app.add_middleware(
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+_MODEL_TOOL = "llama-3.3-70b-versatile"
+
 # Load data at startup
 try:
     dl.load()
@@ -61,11 +63,6 @@ TOOLS = [
                         "type": "string",
                         "enum": ["IPL","T20I","IPL26","Overall","2025"],
                         "description": "Competition/period context"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -105,11 +102,6 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
-                    },
-                    "n": {
-                        "type": "integer",
-                        "description": "Number of results (default 5)",
-                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -243,7 +235,6 @@ TOOLS = [
                         "description": "Stat to rank by. Default runs",
                         "default": "runs"
                     },
-                    "n": {"type": "integer", "default": 5}
                 },
                 "required": ["venue"]
             }
