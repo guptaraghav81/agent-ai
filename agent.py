@@ -622,6 +622,204 @@ def ask(question: str):
         else:
             answer = _groq_answer(question)
 
+    # ── Overall (all T20s) runs ───────────────────────────────────────────────
+    elif intent == "overall_runs":
+        rows = dl.top_overall_run_scorers(n=5)
+        chart_title = "Top 5 run scorers — all T20s (all-time)"
+        chart_data = [{"player": r["player"], "value": r["runs"]} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** leads all T20 cricket with **{rows[0]['runs']:,} runs** across all formats.\n\n"
+            + _leaderboard_text(rows, "runs", "runs")
+            + DATA_NOTE
+        )
+
+    # ── Overall (all T20s) wickets ────────────────────────────────────────────
+    elif intent == "overall_wickets":
+        rows = dl.top_overall_wicket_takers(n=5)
+        chart_title = "Top 5 wicket takers — all T20s (all-time)"
+        chart_data = [{"player": r["player"], "value": r["wickets"]} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** is the leading wicket taker across all T20 cricket with **{rows[0]['wickets']} wickets**.\n\n"
+            + _leaderboard_text(rows, "wickets", "wickets")
+            + DATA_NOTE
+        )
+
+    # ── Overall (all T20s) sixes ──────────────────────────────────────────────
+    elif intent == "overall_sixes":
+        rows = dl.top_overall_six_hitters(n=5)
+        chart_title = "Top 5 six hitters — all T20s (all-time)"
+        chart_data = [{"player": r["player"], "value": r["sixes"]} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has hit the most sixes across all T20 cricket — **{rows[0]['sixes']} sixes**.\n\n"
+            + _leaderboard_text(rows, "sixes", "sixes")
+            + DATA_NOTE
+        )
+
+    # ── IPL 2026 sixes ────────────────────────────────────────────────────────
+    elif intent == "ipl26_sixes":
+        rows = dl.top_ipl26_six_hitters(n=5)
+        if rows:
+            chart_title = "Top 5 six hitters — IPL 2026"
+            chart_data = [{"player": r["player"], "value": r["sixes"]} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** leads IPL 2026 with **{rows[0]['sixes']} sixes** this season.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — {r['sixes']} sixes" for r in rows])
+                + DATA_NOTE_26
+            )
+        else:
+            answer = "No IPL 2026 six-hitting data available yet."
+
+    # ── IPL 2026 batting average ──────────────────────────────────────────────
+    elif intent == "ipl26_avg":
+        rows = dl.top_ipl26_avg(n=5, min_innings=5)
+        if rows:
+            chart_title = "Best batting averages — IPL 2026 (min 5 innings)"
+            chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** has the best batting average in IPL 2026 — **{_fmt_num(rows[0]['value'])}**.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — avg {_fmt_num(r['value'])}" for r in rows])
+                + "\n\n📊 Minimum 5 innings. IPL 2026 season only."
+            )
+        else:
+            answer = "No IPL 2026 batting average data available yet."
+
+    # ── IPL 2026 strike rate ──────────────────────────────────────────────────
+    elif intent == "ipl26_sr":
+        rows = dl.top_ipl26_sr(n=5, min_innings=5)
+        if rows:
+            chart_title = "Best batting strike rates — IPL 2026 (min 5 innings)"
+            chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** has the best batting strike rate in IPL 2026 — **{_fmt_num(rows[0]['value'])}**.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — SR {_fmt_num(r['value'])}" for r in rows])
+                + "\n\n📊 Minimum 5 innings. IPL 2026 season only."
+            )
+        else:
+            answer = "No IPL 2026 strike rate data available yet."
+
+    # ── IPL 2026 economy ─────────────────────────────────────────────────────
+    elif intent == "ipl26_economy":
+        rows = dl.top_ipl26_economy(n=5, min_innings=5)
+        if rows:
+            chart_title = "Best economy rates — IPL 2026 (min 5 innings)"
+            chart_data = [{"player": r["player"], "value": round(r["value"], 2)} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** has the best economy rate in IPL 2026 — **{_fmt_num(rows[0]['value'])}** runs/over.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — econ {_fmt_num(r['value'])}" for r in rows])
+                + "\n\n📊 Minimum 5 bowling innings. IPL 2026 season only."
+            )
+        else:
+            answer = "No IPL 2026 economy data available yet."
+
+    # ── IPL 2026 bowling average ──────────────────────────────────────────────
+    elif intent == "ipl26_bowl_avg":
+        rows = dl.top_ipl26_bowl_avg(n=5, min_wickets=5)
+        if rows:
+            chart_title = "Best bowling averages — IPL 2026 (min 5 wickets)"
+            chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** has the best bowling average in IPL 2026 — **{_fmt_num(rows[0]['value'])}**.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — avg {_fmt_num(r['value'])}" for r in rows])
+                + "\n\n📊 Minimum 5 wickets. IPL 2026 season only."
+            )
+        else:
+            answer = "No IPL 2026 bowling average data available yet."
+
+    # ── IPL 2026 bowling strike rate ──────────────────────────────────────────
+    elif intent == "ipl26_bowl_sr":
+        rows = dl.top_ipl26_bowl_sr(n=5, min_wickets=5)
+        if rows:
+            chart_title = "Best bowling strike rates — IPL 2026 (min 5 wickets)"
+            chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+            answer = (
+                f"**{rows[0]['player']}** has the best bowling strike rate in IPL 2026 — **{_fmt_num(rows[0]['value'])}** balls/wicket.\n\n"
+                + "\n".join([f"{r['rank']}. {r['player']} — SR {_fmt_num(r['value'])}" for r in rows])
+                + "\n\n📊 Minimum 5 wickets. IPL 2026 season only."
+            )
+        else:
+            answer = "No IPL 2026 bowling SR data available yet."
+
+    # ── Form wickets (2025) ───────────────────────────────────────────────────
+    elif intent == "form_wickets":
+        rows = dl.top_form_wicket_takers(n=5)
+        chart_title = "Top 5 in-form bowlers (2025)"
+        chart_data = [{"player": r["player"], "value": r["wickets"]} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has been the standout bowler in 2025 with **{rows[0]['wickets']} wickets** "
+            f"(econ {_fmt_num(rows[0]['economy'])}).\n\n"
+            + _leaderboard_text(rows, "wickets", "wickets")
+            + "\n\n📊 Stats from Jan 2025 onwards, all T20 formats."
+        )
+
+    # ── T20I batting average ──────────────────────────────────────────────────
+    elif intent == "t20i_avg":
+        rows = dl.top_t20i_avg(n=5, min_innings=20)
+        chart_title = "Best T20I batting averages (min 20 innings)"
+        chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has the best T20I batting average — **{_fmt_num(rows[0]['value'])}**.\n\n"
+            + "\n".join([f"{r['rank']}. {r['player']} — avg {_fmt_num(r['value'])}" for r in rows])
+            + "\n\n📊 Minimum 20 innings. All T20 Internationals."
+        )
+
+    # ── T20I strike rate ──────────────────────────────────────────────────────
+    elif intent == "t20i_sr":
+        rows = dl.top_t20i_sr(n=5, min_innings=20)
+        chart_title = "Best T20I batting strike rates (min 20 innings)"
+        chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has the best T20I batting strike rate — **{_fmt_num(rows[0]['value'])}**.\n\n"
+            + "\n".join([f"{r['rank']}. {r['player']} — SR {_fmt_num(r['value'])}" for r in rows])
+            + "\n\n📊 Minimum 20 innings. All T20 Internationals."
+        )
+
+    # ── T20I economy ──────────────────────────────────────────────────────────
+    elif intent == "t20i_economy":
+        rows = dl.top_t20i_economy(n=5, min_innings=20)
+        chart_title = "Best T20I economy rates (min 20 innings)"
+        chart_data = [{"player": r["player"], "value": round(r["value"], 2)} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has the best T20I economy rate — **{_fmt_num(rows[0]['value'])}** runs/over.\n\n"
+            + "\n".join([f"{r['rank']}. {r['player']} — econ {_fmt_num(r['value'])}" for r in rows])
+            + "\n\n📊 Minimum 20 bowling innings. All T20 Internationals."
+        )
+
+    # ── T20I sixes ────────────────────────────────────────────────────────────
+    elif intent == "t20i_sixes":
+        rows = dl.top_t20i_six_hitters(n=5)
+        chart_title = "Top 5 six hitters — T20 Internationals (all-time)"
+        chart_data = [{"player": r["player"], "value": r["sixes"]} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has hit the most sixes in T20 Internationals — **{rows[0]['sixes']} sixes**.\n\n"
+            + _leaderboard_text(rows, "sixes", "sixes")
+            + DATA_NOTE_T20
+        )
+
+    # ── Best dot ball % (IPL) ─────────────────────────────────────────────────
+    elif intent == "best_dot_pct":
+        rows = dl.top_dot_pct_bowlers(n=5, min_innings=20)
+        chart_title = "Best dot ball % — IPL (min 20 innings)"
+        chart_data = [{"player": r["player"], "value": round(r["value"], 1)} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** delivers the most dot balls in IPL — **{_fmt_num(rows[0]['value'])}%** of deliveries are dots.\n\n"
+            + "\n".join([f"{r['rank']}. {r['player']} — {_fmt_num(r['value'])}% dots  "
+                         f"(econ {_fmt_num(r.get('Econ_IPL'))})" for r in rows])
+            + "\n\n📊 Minimum 20 bowling innings. IPL career stats."
+        )
+
+    # ── Most balls faced (IPL) ────────────────────────────────────────────────
+    elif intent == "most_balls_faced":
+        rows = dl.top_balls_faced(n=5)
+        chart_title = "Most balls faced — IPL (all-time)"
+        chart_data = [{"player": r["player"], "value": int(r["value"])} for r in rows]
+        answer = (
+            f"**{rows[0]['player']}** has faced the most balls in IPL history — **{int(rows[0]['value']):,} deliveries**.\n\n"
+            + "\n".join([f"{r['rank']}. {r['player']} — {int(r['value']):,} balls  "
+                         f"({int(r.get('Runs_IPL') or 0):,} runs, SR {_fmt_num(r.get('Batting_SR_IPL'))})"
+                         for r in rows])
+            + DATA_NOTE_IPL
+        )
+
     # ── Open knowledge → Groq ─────────────────────────────────────────────────
     else:
         answer = _groq_answer(question)

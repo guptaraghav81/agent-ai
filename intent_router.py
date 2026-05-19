@@ -38,6 +38,8 @@ _RULES = [
         r"\bwho (is|are) (on )?top\b",
         r"\btable (leader|topper)\b",
         r"\bwhich team (is|are) (leading|top|first|ahead)\b",
+        r"\bqualif(y|ied|ication)\b.*\bipl\b",
+        r"\bplayoff (race|contenders|picture)\b",
     ]),
 
     # ── Live / today's matches ─────────────────────────────────────────────────
@@ -55,6 +57,7 @@ _RULES = [
         r"\bmost (successful|dominant) team\b",
         r"\bwhich team has won (the most|more)\b",
         r"\bipl champion\b",
+        r"\bmost trophies\b",
     ]),
 
     # ── Highest individual score ───────────────────────────────────────────────
@@ -78,12 +81,71 @@ _RULES = [
         r"\b(2026 ipl|current season).*(wicket)\b",
     ]),
 
+    ("ipl26_sixes", [
+        r"\b(ipl 2026|ipl26|this season).*(most sixes|six hitter|six king)\b",
+        r"\b(most sixes|six hitter|six king).*(ipl 2026|ipl26|this season)\b",
+        r"\b(2026 ipl|current season).*(six)\b",
+    ]),
+
+    ("ipl26_avg", [
+        r"\b(ipl 2026|ipl26|this season).*(best average|batting average|best avg)\b",
+        r"\b(best average|batting average|best avg).*(ipl 2026|ipl26|this season)\b",
+    ]),
+
+    ("ipl26_sr", [
+        r"\b(ipl 2026|ipl26|this season).*(best strike rate|highest sr|fastest scorer)\b",
+        r"\b(best strike rate|highest sr|fastest scorer).*(ipl 2026|ipl26|this season)\b",
+    ]),
+
+    ("ipl26_economy", [
+        r"\b(ipl 2026|ipl26|this season).*(best economy|lowest economy|most economical)\b",
+        r"\b(best economy|lowest economy|most economical).*(ipl 2026|ipl26|this season)\b",
+    ]),
+
+    ("ipl26_bowl_avg", [
+        r"\b(ipl 2026|ipl26|this season).*(best bowling average|bowling avg)\b",
+        r"\b(best bowling average|bowling avg).*(ipl 2026|ipl26|this season)\b",
+    ]),
+
+    ("ipl26_bowl_sr", [
+        r"\b(ipl 2026|ipl26|this season).*(best bowling strike rate|bowling sr)\b",
+        r"\b(best bowling strike rate|bowling sr).*(ipl 2026|ipl26|this season)\b",
+    ]),
+
     # ── Form / recent stats ───────────────────────────────────────────────────
     ("form_runs", [
         r"\b(form|recent|in form|current form|best form)\b.*(batsman|batter|scorer)\b",
         r"\b(best|top).*(batsman|batter).*(form|recent|2025)\b",
         r"\bwho (is|are) (in )?best form\b",
         r"\btop scorer.*(2025|recent|last (year|season))\b",
+    ]),
+
+    ("form_wickets", [
+        r"\b(form|recent|in form|current form|best form)\b.*(bowler|wicket.taker)\b",
+        r"\b(best|top).*(bowler).*(form|recent|2025)\b",
+        r"\bmost wickets.*(2025|recent|last (year|season))\b",
+        r"\btop wicket.taker.*(2025|recent|last (year|season))\b",
+    ]),
+
+    # ── Overall (all T20s) leaderboards ───────────────────────────────────────
+    ("overall_runs", [
+        r"\bmost (overall|all.?t20|t20) runs\b",
+        r"\bhighest run scorer (overall|across all t20|in all t20)\b",
+        r"\bmost runs (overall|across all|in all) t20\b",
+        r"\ball.?t20 run (king|leader|chart)\b",
+    ]),
+
+    ("overall_wickets", [
+        r"\bmost (overall|all.?t20|t20) wickets\b",
+        r"\bhighest wicket taker (overall|across all t20|in all t20)\b",
+        r"\bmost wickets (overall|across all|in all) t20\b",
+        r"\ball.?t20 wicket (king|leader|chart)\b",
+    ]),
+
+    ("overall_sixes", [
+        r"\bmost (overall|all.?t20|t20) sixes\b",
+        r"\bbiggest six hitter (overall|across all t20|in all t20)\b",
+        r"\bmost sixes (overall|across all|in all) t20\b",
     ]),
 
     # ── Most runs (IPL career leaderboard) ────────────────────────────────────
@@ -167,6 +229,24 @@ _RULES = [
         r"\bmost (ipl )?dangerous bowler\b",
     ]),
 
+    # ── Best dot ball percentage ──────────────────────────────────────────────
+    ("best_dot_pct", [
+        r"\bbest dot ball\b",
+        r"\bmost dot balls?\b",
+        r"\bhighest dot (ball )?percentage\b",
+        r"\bmost pressure (bowler|bowling)\b",
+        r"\btightest (bowling|bowler) (in ipl|ipl)\b",
+        r"\bwho (bowls|delivers) (the )?most dot\b",
+    ]),
+
+    # ── Most balls faced (consistency / endurance) ────────────────────────────
+    ("most_balls_faced", [
+        r"\bmost balls (faced|played)\b",
+        r"\bwho (has )?faced (the )?most balls\b",
+        r"\bmost (ipl )?deliveries faced\b",
+        r"\bbiggest (ipl )?run.?(consumer|accumulator)\b",
+    ]),
+
     # ── Season Orange Cap (most runs in a specific IPL season) ────────────────
     ("season_orange_cap", [
         r"\borange cap.*(ipl )?\d{4}\b",
@@ -193,6 +273,8 @@ _RULES = [
         r"\b(weakness|weakness of|problem bowler|nemesis).*(of|for)\b",
         r"\bwhich bowler.*(troubles|dominates|gets out|is best against)\b",
         r"\bwho (does \w+ struggle against|has (the )?best record against)\b",
+        r"\bkryptonite\b",
+        r"\bbane of\b",
     ]),
 
     # ── Player info with context (T20I / IPL26 / season-specific) ────────────
@@ -205,6 +287,7 @@ _RULES = [
         r"\b\w+.*(ipl 2026|ipl26|this season).*(stats|record|runs|wickets)\b",
         r"\b(ipl 2026|ipl26|this season).*(stats|record).*(of|for)?\b",
     ]),
+
     ("t20i_runs", [
         r"\bmost t20i runs\b",
         r"\btop t20i (run )?scorer\b",
@@ -217,6 +300,31 @@ _RULES = [
         r"\btop t20i wicket.taker\b",
         r"\bmost wickets in t20(i| international)\b",
         r"\bt20 international.*(most wickets|top wicket)\b",
+    ]),
+
+    # ── T20I batting/bowling quality leaderboards ─────────────────────────────
+    ("t20i_avg", [
+        r"\bbest t20i (batting )?average\b",
+        r"\bhighest t20i (batting )?average\b",
+        r"\bwho (has )?(the )?best average in t20i\b",
+    ]),
+
+    ("t20i_sr", [
+        r"\bbest t20i (batting )?strike rate\b",
+        r"\bhighest t20i (batting )?sr\b",
+        r"\bfastest t20i (scorer|batter)\b",
+    ]),
+
+    ("t20i_economy", [
+        r"\bbest t20i economy\b",
+        r"\blowest t20i economy\b",
+        r"\bmost economical t20i bowler\b",
+    ]),
+
+    ("t20i_sixes", [
+        r"\bmost t20i sixes\b",
+        r"\bbiggest six hitter in t20i\b",
+        r"\bwho (has )?hit (the )?most sixes in t20i\b",
     ]),
 
     # ── Player profile / info ─────────────────────────────────────────────────

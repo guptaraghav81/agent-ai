@@ -12,17 +12,21 @@ _MATCHUP_DIR = os.path.join(_DATA_DIR, "matchup")
 _PLAYERS_PATH         = os.path.join(_DATA_DIR, "players.parquet")
 _REGISTRY_PATH        = os.path.join(_DATA_DIR, "player_registry.parquet")
 _TEAM_RECORDS_PATH    = os.path.join(_DATA_DIR, "team_match_records.parquet")
-_MATCHUP_SUMMARY_PATH = os.path.join(_MATCHUP_DIR, "summary.parquet")
-_MATCHUP_BY_BATTER    = os.path.join(_MATCHUP_DIR, "by_batter")
-_PLAYER_INDEX_PATH    = os.path.join(_DATA_DIR, "player_index.json")
+_MATCHUP_SUMMARY_PATH  = os.path.join(_MATCHUP_DIR, "summary.parquet")
+_MATCHUP_BY_BATTER     = os.path.join(_MATCHUP_DIR, "by_batter")
+_PLAYER_INDEX_PATH     = os.path.join(_DATA_DIR, "player_index.json")
+_SEASON_BATTING_PATH   = os.path.join(_DATA_DIR, "season_batting.parquet")
+_SEASON_BOWLING_PATH   = os.path.join(_DATA_DIR, "season_bowling.parquet")
 
 # ── Module-level state ─────────────────────────────────────────────────────────
 _loaded = False
 
-players_df      = None   # players.parquet  — 2,516 players, all prefixes
-registry_df     = None   # player_registry.parquet
-team_records_df = None   # team_match_records.parquet
-matchup_df      = None   # matchup/summary.parquet (loaded lazily)
+players_df        = None   # players.parquet  — 2,516 players, all prefixes
+registry_df       = None   # player_registry.parquet
+team_records_df   = None   # team_match_records.parquet
+matchup_df        = None   # matchup/summary.parquet (loaded lazily)
+season_batting_df = None   # season_batting.parquet — runs per player per IPL season
+season_bowling_df = None   # season_bowling.parquet — wickets per player per IPL season
 
 _player_index   = {}     # lowercase name/alias → unique_name (for resolution)
 _display_map    = {}     # unique_name → display_name
@@ -72,6 +76,7 @@ def load():
     """Load all parquet files once at startup. Safe to call multiple times."""
     global _loaded
     global players_df, registry_df, team_records_df
+    global season_batting_df, season_bowling_df
     global _player_index, _display_map, _unique_map, _player_names
 
     if _loaded:
@@ -86,6 +91,19 @@ def load():
 
     # ── team_match_records.parquet ────────────────────────────────────────────
     team_records_df = pd.read_parquet(_TEAM_RECORDS_PATH)
+
+    # ── season_batting/bowling.parquet — pre-computed season aggregates ───────
+    if os.path.exists(_SEASON_BATTING_PATH):
+        season_batting_df = pd.read_parquet(_SEASON_BATTING_PATH)
+        print(f"season_batting.parquet loaded — {len(season_batting_df):,} rows")
+    else:
+        print("WARNING: season_batting.parquet not found — season cap queries disabled")
+
+    if os.path.exists(_SEASON_BOWLING_PATH):
+        season_bowling_df = pd.read_parquet(_SEASON_BOWLING_PATH)
+        print(f"season_bowling.parquet loaded — {len(season_bowling_df):,} rows")
+    else:
+        print("WARNING: season_bowling.parquet not found — season cap queries disabled")
 
     # ── player_index.json — name/alias → unique_name ─────────────────────────
     # The JSON maps lowercase name → cricinfo_id.
@@ -458,17 +476,18 @@ def get_matchup(batter_name: str, bowler_name: str,
 
 
 def top_season_run_scorers(season: int, n: int = 5) -> list[dict]:
-    """Top run scorers in a specific IPL season — computed from bbb_base."""
+    """Top run scorers in a specific IPL season — from pre-computed season_batting.parquet."""
     load()
+    if season_batting_df is None:
+        return []
     try:
-        bbb = pd.read_parquet(_PLAYERS_PATH.replace("players.parquet", "bbb_base.parquet"))
-        df = bbb[bbb["is_ipl"] & (bbb["season"] == season) & ~bbb["is_super_over"] & ~bbb["is_wide"]]
+        df = season_batting_df[season_batting_df["season"] == season]
         if df.empty:
             return []
-        grp = df.groupby("batter")["runs_batter"].sum().sort_values(ascending=False).head(n)
+        top = df.nlargest(n, "runs")
         return [
-            {"rank": i+1, "player": resolve_display(name) or name, "runs": int(runs)}
-            for i, (name, runs) in enumerate(grp.items())
+            {"rank": i+1, "player": resolve_display(r["player"]) or r["player"], "runs": int(r["runs"])}
+            for i, r in enumerate(top.itertuples(index=False))
         ]
     except Exception as e:
         print(f"Season run scorers error: {e}")
@@ -476,21 +495,127 @@ def top_season_run_scorers(season: int, n: int = 5) -> list[dict]:
 
 
 def top_season_wicket_takers(season: int, n: int = 5) -> list[dict]:
-    """Top wicket takers in a specific IPL season — computed from bbb_base."""
+    """Top wicket takers in a specific IPL season — from pre-computed season_bowling.parquet."""
     load()
+    if season_bowling_df is None:
+        return []
     try:
-        bbb = pd.read_parquet(_PLAYERS_PATH.replace("players.parquet", "bbb_base.parquet"))
-        df = bbb[bbb["is_ipl"] & (bbb["season"] == season) & ~bbb["is_super_over"]]
+        df = season_bowling_df[season_bowling_df["season"] == season]
         if df.empty:
             return []
-        grp = df.groupby("bowler")["bowl_wicket"].sum().sort_values(ascending=False).head(n)
+        top = df.nlargest(n, "wickets")
         return [
-            {"rank": i+1, "player": resolve_display(name) or name, "wickets": int(wkts)}
-            for i, (name, wkts) in enumerate(grp.items())
+            {"rank": i+1, "player": resolve_display(r["player"]) or r["player"], "wickets": int(r["wickets"])}
+            for i, r in enumerate(top.itertuples(index=False))
         ]
     except Exception as e:
         print(f"Season wicket takers error: {e}")
         return []
+
+
+# ── New leaderboard helpers ────────────────────────────────────────────────────
+
+def _top_by_col(col: str, n: int, ascending: bool = False,
+                min_col: str = None, min_val: int = 0,
+                extra_cols: list = None) -> list[dict]:
+    """Generic leaderboard helper over players_df."""
+    load()
+    df = players_df.dropna(subset=[col])
+    if min_col:
+        df = df[df[min_col] >= min_val]
+    df = df.sort_values(col, ascending=ascending).head(n)
+    rows = []
+    for i, (_, r) in enumerate(df.iterrows()):
+        row = {"rank": i+1, "player": resolve_display(r["unique_name"]), "value": _safe(r[col])}
+        if extra_cols:
+            for ec in extra_cols:
+                row[ec] = _safe(r.get(ec))
+        rows.append(row)
+    return rows
+
+
+# ── Overall (all T20s) leaderboards ───────────────────────────────────────────
+
+def top_overall_run_scorers(n: int = 5) -> list[dict]:
+    return top_run_scorers(n=n, prefix="Overall")
+
+def top_overall_wicket_takers(n: int = 5) -> list[dict]:
+    return top_wicket_takers(n=n, prefix="Overall")
+
+def top_overall_six_hitters(n: int = 5) -> list[dict]:
+    return top_six_hitters(n=n, prefix="Overall")
+
+
+# ── IPL 2026 quality leaderboards ─────────────────────────────────────────────
+
+def top_ipl26_six_hitters(n: int = 5) -> list[dict]:
+    return top_six_hitters(n=n, prefix="IPL26")
+
+def top_ipl26_avg(n: int = 5, min_innings: int = 5) -> list[dict]:
+    return _top_by_col("Batting_Avg_IPL26", n, ascending=False,
+                       min_col="Innings_IPL26", min_val=min_innings,
+                       extra_cols=["Innings_IPL26", "Runs_IPL26"])
+
+def top_ipl26_sr(n: int = 5, min_innings: int = 5) -> list[dict]:
+    return _top_by_col("Batting_SR_IPL26", n, ascending=False,
+                       min_col="Innings_IPL26", min_val=min_innings,
+                       extra_cols=["Innings_IPL26", "Runs_IPL26"])
+
+def top_ipl26_economy(n: int = 5, min_innings: int = 5) -> list[dict]:
+    return _top_by_col("Econ_IPL26", n, ascending=True,
+                       min_col="Bowl_Innings_IPL26", min_val=min_innings,
+                       extra_cols=["Bowl_Innings_IPL26", "Wickets_IPL26"])
+
+def top_ipl26_bowl_avg(n: int = 5, min_wickets: int = 5) -> list[dict]:
+    return _top_by_col("Bowling_Avg_IPL26", n, ascending=True,
+                       min_col="Wickets_IPL26", min_val=min_wickets,
+                       extra_cols=["Wickets_IPL26", "Bowl_Innings_IPL26"])
+
+def top_ipl26_bowl_sr(n: int = 5, min_wickets: int = 5) -> list[dict]:
+    return _top_by_col("Bowling_SR_IPL26", n, ascending=True,
+                       min_col="Wickets_IPL26", min_val=min_wickets,
+                       extra_cols=["Wickets_IPL26"])
+
+
+# ── Form (2025) bowling leaderboard ───────────────────────────────────────────
+
+def top_form_wicket_takers(n: int = 5) -> list[dict]:
+    return top_wicket_takers(n=n, prefix="2025")
+
+
+# ── T20I quality leaderboards ─────────────────────────────────────────────────
+
+def top_t20i_avg(n: int = 5, min_innings: int = 20) -> list[dict]:
+    return _top_by_col("Batting_Avg_T20I", n, ascending=False,
+                       min_col="Innings_T20I", min_val=min_innings,
+                       extra_cols=["Innings_T20I", "Runs_T20I"])
+
+def top_t20i_sr(n: int = 5, min_innings: int = 20) -> list[dict]:
+    return _top_by_col("Batting_SR_T20I", n, ascending=False,
+                       min_col="Innings_T20I", min_val=min_innings,
+                       extra_cols=["Innings_T20I", "Runs_T20I"])
+
+def top_t20i_economy(n: int = 5, min_innings: int = 20) -> list[dict]:
+    return _top_by_col("Econ_T20I", n, ascending=True,
+                       min_col="Bowl_Innings_T20I", min_val=min_innings,
+                       extra_cols=["Bowl_Innings_T20I", "Wickets_T20I"])
+
+def top_t20i_six_hitters(n: int = 5) -> list[dict]:
+    return top_six_hitters(n=n, prefix="T20I")
+
+
+# ── IPL career misc leaderboards ──────────────────────────────────────────────
+
+def top_dot_pct_bowlers(n: int = 5, min_innings: int = 20) -> list[dict]:
+    """Bowlers with highest dot ball percentage in IPL."""
+    return _top_by_col("Dot_Pct_IPL", n, ascending=False,
+                       min_col="Bowl_Innings_IPL", min_val=min_innings,
+                       extra_cols=["Bowl_Innings_IPL", "Wickets_IPL", "Econ_IPL"])
+
+def top_balls_faced(n: int = 5) -> list[dict]:
+    """Batters who have faced most balls in IPL."""
+    return _top_by_col("Balls_Faced_IPL", n, ascending=False,
+                       extra_cols=["Runs_IPL", "Batting_SR_IPL", "Innings_IPL"])
 
 
 def get_batter_vs_all_bowlers(batter_name: str,
