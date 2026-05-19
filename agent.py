@@ -63,6 +63,11 @@ TOOLS = [
                         "type": "string",
                         "enum": ["IPL","T20I","IPL26","Overall","2025"],
                         "description": "Competition/period context"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -102,6 +107,11 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -235,6 +245,7 @@ TOOLS = [
                         "description": "Stat to rank by. Default runs",
                         "default": "runs"
                     },
+                    "n": {"type": "integer", "default": 5}
                 },
                 "required": ["venue"]
             }
@@ -521,6 +532,209 @@ def _format_tool_result_readable(result: dict) -> str:
     return json.dumps(result)
 
 
+def _fmt(val):
+    """Format a number cleanly — int if whole, 2dp if decimal."""
+    if val is None:
+        return "N/A"
+    try:
+        f = float(val)
+        return str(int(f)) if f == int(f) else f"{f:.2f}"
+    except:
+        return str(val)
+
+def _build_answer(question: str, tool_results: list) -> str:
+    """
+    Build a clean answer string directly from tool results — zero Groq involvement.
+    This is the definitive fix for hallucination: Python formats, not LLM.
+    """
+    parts = []
+
+    for tr in tool_results:
+        r    = tr["result"]
+        name = tr["tool_name"]
+
+        if "error" in r:
+            parts.append(f"I don't have data for that: {r['error']}")
+            continue
+
+        # ── Leaderboard ───────────────────────────────────────────────────────
+        if "rows" in r and r["rows"]:
+            rows   = r["rows"]
+            stat   = r.get("stat", "value")
+            season = r.get("season", "")
+            comp   = r.get("competition", "")
+            phase  = r.get("phase", "ALL")
+            prefix = r.get("prefix", "")
+
+            ctx_parts = [x for x in [comp, str(season) if season else "", prefix] if x]
+            ctx = " ".join(ctx_parts)
+            if phase and phase != "ALL":
+                ctx += f" ({phase} overs)"
+
+            stat_label = {
+                "runs": "runs", "wickets": "wickets", "sixes": "sixes",
+                "fours": "fours", "avg": "batting avg", "sr": "strike rate",
+                "economy": "economy", "bowl_avg": "bowling avg",
+                "bowl_sr": "bowling SR", "dot_pct": "dot ball %",
+                "balls_faced": "balls faced",
+            }.get(stat, stat)
+
+            if "winner" in r:
+                w = r["winner"]
+                parts.append(f"**{w['player']}** won the {stat_label} title in **{ctx}** with **{_fmt(w['value'])} {stat_label}**.")
+            else:
+                lines = [f"Top {len(rows)} by {stat_label} — **{ctx}**:"]
+                for row in rows:
+                    lines.append(f"{row['rank']}. **{row['player']}** — {_fmt(row['value'])} {stat_label}")
+                parts.append("\n".join(lines))
+
+        # ── Matchup ───────────────────────────────────────────────────────────
+        elif "matchup" in r:
+            m = r["matchup"]
+            phase_str = f" ({m['phase']} overs)" if m.get("phase") and m["phase"] != "ALL" else ""
+            parts.append(
+                f"**{m['batter']} vs {m['bowler']}** in {m['competition']}{phase_str}:\n"
+                f"- **Balls faced:** {m['balls']}\n"
+                f"- **Runs scored:** {m['runs']}\n"
+                f"- **Dismissals:** {m['dismissed']}\n"
+                f"- **Strike rate:** {_fmt(m.get('sr'))}\n"
+                f"- **Dot ball %:** {_fmt(m.get('dot_pct'))}%\n"
+                f"- **Dismissal rate:** every {_fmt(m.get('dismiss_rate'))} balls"
+            )
+
+        # ── Batter weaknesses ─────────────────────────────────────────────────
+        elif "weak_against" in r:
+            batter = r.get("batter", "")
+            comp   = r.get("competition", "IPL")
+            phase  = r.get("phase", "ALL")
+            phase_str = f" ({phase} overs)" if phase != "ALL" else ""
+
+            weak = r.get("weak_against", [])
+            dom  = r.get("dominates", [])
+
+            lines = [f"**{batter}** in {comp}{phase_str}:\n"]
+            if weak:
+                lines.append("🎯 **Bowlers who trouble him most:**")
+                for w in weak:
+                    lines.append(f"  - **{w['bowler_display']}** — {w['balls']} balls, {w['dismissed']} dismissals, SR {_fmt(w['sr'])}")
+            if dom:
+                lines.append("\n💪 **Bowlers he dominates:**")
+                for w in dom:
+                    lines.append(f"  - **{w['bowler_display']}** — {w['balls']} balls, {w['dismissed']} dismissals, SR {_fmt(w['sr'])}")
+            parts.append("\n".join(lines))
+
+        # ── Player career stats ───────────────────────────────────────────────
+        elif "stats" in r:
+            s   = r["stats"]
+            pfx = r.get("prefix", "IPL")
+            season = s.get("season")
+            comp   = s.get("competition", "")
+            phase  = s.get("phase", "ALL")
+
+            ctx = f"{comp} {season}" if season else pfx
+            if phase and phase != "ALL":
+                ctx += f" ({phase})"
+
+            name_str = s.get("name", "")
+            lines = [f"**{name_str}** — {ctx} stats:"]
+
+            # Batting
+            if s.get("runs") is not None:
+                lines.append(
+                    f"🏏 **Batting:** {s.get('innings') or 0} innings, "
+                    f"**{_fmt(s.get('runs'))} runs**, "
+                    f"avg {_fmt(s.get('avg'))}, SR {_fmt(s.get('sr'))}, "
+                    f"{s.get('sixes') or 0} sixes"
+                )
+            # Bowling
+            if s.get("wickets") is not None:
+                lines.append(
+                    f"🎳 **Bowling:** {s.get('bowl_innings') or 0} innings, "
+                    f"**{_fmt(s.get('wickets'))} wickets**, "
+                    f"econ {_fmt(s.get('economy'))}, avg {_fmt(s.get('bowl_avg'))}"
+                )
+            parts.append("\n".join(lines))
+
+        # ── Standings ─────────────────────────────────────────────────────────
+        elif "standings" in r:
+            lines = ["**IPL 2026 Points Table:**\n"]
+            for row in r["standings"]:
+                lines.append(
+                    f"{row['position']}. **{row['team']}** — "
+                    f"{row['points']} pts  (W{row['won']} L{row['lost']}, NRR {row['nrr']:+.3f})"
+                )
+            parts.append("\n".join(lines))
+
+        # ── Titles ────────────────────────────────────────────────────────────
+        elif "titles" in r:
+            winners = [t for t in r["titles"] if t["titles"] > 0]
+            lines   = ["**IPL Title Count:**\n"]
+            for t in winners:
+                lines.append(f"- **{t['team']}**: {t['titles']} 🏆")
+            parts.append("\n".join(lines))
+
+        # ── Team vs Team ──────────────────────────────────────────────────────
+        elif "team1" in r:
+            t1, t2 = r["team1"], r["team2"]
+            comp   = r.get("competition", "IPL")
+            season = r.get("season")
+            ctx    = f"{comp} {season}" if season else f"all-time {comp}"
+            parts.append(
+                f"**{t1} vs {t2}** — {ctx}:\n"
+                f"- Total matches: **{r['matches']}**\n"
+                f"- **{t1}** wins: **{r['team1_wins']}**\n"
+                f"- **{t2}** wins: **{r['team2_wins']}**\n"
+                f"- No result: {r.get('no_result', 0)}"
+            )
+
+        # ── Venue stats ───────────────────────────────────────────────────────
+        elif "batting" in r or "bowling" in r:
+            name_str  = r.get("name", "")
+            venue_str = r.get("venue_query", "")
+            lines = [f"**{name_str}** at **{venue_str}**:"]
+            if "batting" in r:
+                b = r["batting"]
+                lines.append(
+                    f"🏏 **Batting:** {b.get('innings',0)} innings, "
+                    f"**{_fmt(b.get('runs'))} runs**, "
+                    f"avg {_fmt(b.get('avg'))}, SR {_fmt(b.get('sr'))}"
+                )
+            if "bowling" in r:
+                b = r["bowling"]
+                lines.append(
+                    f"🎳 **Bowling:** **{_fmt(b.get('wickets'))} wickets**, "
+                    f"econ {_fmt(b.get('economy'))}, avg {_fmt(b.get('bowl_avg'))}"
+                )
+            parts.append("\n".join(lines))
+
+        # ── Venue leaderboard ─────────────────────────────────────────────────
+        elif "venue" in r and "rows" in r:
+            rows  = r["rows"]
+            venue = r.get("venue", "")
+            stat  = r.get("stat", "value")
+            lines = [f"Top {len(rows)} by {stat} at **{venue}**:"]
+            for row in rows:
+                lines.append(f"{row['rank']}. **{row['player']}** — {_fmt(row['value'])} {stat}")
+            parts.append("\n".join(lines))
+
+        # ── Compare players ───────────────────────────────────────────────────
+        elif "player1" in r and "player2" in r:
+            s1 = r["player1"]
+            s2 = r["player2"]
+            e  = r.get("edges", {})
+            lines = [f"**{s1['name']} vs {s2['name']}** — IPL career:\n"]
+            lines.append(f"| Stat | {s1['name']} | {s2['name']} |")
+            lines.append("|------|------|------|")
+            for stat, label in [("runs","Runs"),("avg","Bat Avg"),("sr","Bat SR"),
+                                  ("sixes","Sixes"),("wickets","Wickets"),("economy","Economy")]:
+                v1 = _fmt(s1.get(stat))
+                v2 = _fmt(s2.get(stat))
+                lines.append(f"| {label} | {v1} | {v2} |")
+            parts.append("\n".join(lines))
+
+    return "\n\n".join(parts) if parts else "I don't have data for that."
+
+
 def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
     """Build chart_title and chart_data from tool result."""
     if "rows" in tool_result and tool_result["rows"]:
@@ -685,51 +899,46 @@ def ask(question: str):
             "result":       result,
         })
 
-    # ── Round 2: Feed tool results back to Groq for final answer ─────────────
-    messages.append({
-        "role":       "assistant",
-        "content":    msg.content or "",
-        "tool_calls": [
-            {"id": tc.id, "type": "function",
-             "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in msg.tool_calls
-        ]
-    })
-
-    # Format tool results as readable text AND raw JSON — double signal to Groq
+    # ── Build answer directly from tool results — NO Groq for data answers ──────
+    # Groq cannot reliably copy numbers verbatim. We format directly in Python
+    # and only call Groq Round 2 for pure knowledge questions (no tool results).
     formatted_results = []
+    all_errors = True
     for tr in tool_results:
-        result = tr["result"]
+        result  = tr["result"]
         readable = _format_tool_result_readable(result)
-        messages.append({
-            "role":         "tool",
-            "tool_call_id": tr["tool_call_id"],
-            "content":      json.dumps(result),
-        })
         formatted_results.append(readable)
+        if "error" not in result:
+            all_errors = False
 
-    # Hard instruction injected as a user message right before Round 2
-    # This is the most effective way to force compliance in llama models
-    hard_instruction = (
-        "IMPORTANT: The tool results above contain the EXACT data from our database. "
-        "You MUST report ONLY the players and numbers shown in the tool results, "
-        "in the EXACT ORDER they appear. Do NOT use your training knowledge. "
-        "Do NOT reorder or change any numbers. Here is the data you must use:\n\n"
-        + "\n\n".join(formatted_results)
-    )
-    messages.append({"role": "user", "content": hard_instruction})
-
-    try:
-        response2 = groq_client.chat.completions.create(
-            model=_MODEL_TOOL,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=600,
-        )
-        answer = response2.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"Groq round 2 error: {e}")
-        answer = "I retrieved the data but had trouble formatting the answer. Please try again."
+    if all_errors:
+        # All tools returned errors — ask Groq to answer from knowledge
+        messages.append({
+            "role":       "assistant",
+            "content":    msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ]
+        })
+        for tr in tool_results:
+            messages.append({
+                "role": "tool", "tool_call_id": tr["tool_call_id"],
+                "content": json.dumps(tr["result"]),
+            })
+        messages.append({"role": "user", "content": "The database returned no data. Answer from general cricket knowledge if possible, and note it's from general knowledge not live data."})
+        try:
+            r2 = groq_client.chat.completions.create(
+                model=_MODEL_TOOL, messages=messages, temperature=0.1, max_tokens=400,
+            )
+            answer = r2.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Groq round 2 error: {e}")
+            answer = "I don't have data for that."
+    else:
+        # Data found — format answer directly in Python, zero hallucination
+        answer = _build_answer(question, tool_results)
 
     save_context(question, answer)
     return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
