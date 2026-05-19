@@ -61,6 +61,11 @@ TOOLS = [
                         "type": "string",
                         "enum": ["IPL","T20I","IPL26","Overall","2025"],
                         "description": "Competition/period context"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -100,6 +105,11 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -232,7 +242,8 @@ TOOLS = [
                         "enum": ["runs","avg","sr","sixes","wickets","economy","bowl_avg"],
                         "description": "Stat to rank by. Default runs",
                         "default": "runs"
-                    }
+                    },
+                    "n": {"type": "integer", "default": 5}
                 },
                 "required": ["venue"]
             }
@@ -243,11 +254,8 @@ TOOLS = [
         "function": {
             "name": "get_team_vs_team",
             "description": (
-                "Get head-to-head win/loss record between exactly two named IPL teams. "
-                "ONLY use when the question explicitly names two teams and asks for their record, "
-                "e.g. 'MI vs CSK head to head', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
-                "Do NOT use for questions about who won a tournament, championship, or title — "
-                "use get_titles for that. Do NOT use when only one team is mentioned."
+                "Get head-to-head record between two IPL teams. "
+                "Use for 'MI vs CSK', 'KKR vs RCB all time', 'RR vs SRH in 2023'."
             ),
             "parameters": {
                 "type": "object",
@@ -296,12 +304,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_titles",
-            "description": (
-                "Get IPL title/championship count by team — all-time history. "
-                "Use for 'who won the first IPL', 'which team has most titles', "
-                "'IPL champions list', 'who won IPL 2008', 'IPL trophy winners', "
-                "'most successful team', 'how many titles has MI won'."
-            ),
+            "description": "Get IPL title count by team — all-time championship history.",
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -473,6 +476,12 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
     return "", []
 
 
+# ── Model config ───────────────────────────────────────────────────────────────
+# llama-3.3-70b is capable but occasionally generates malformed tool JSON.
+# On retry we use the same model — the malformed JSON is usually transient.
+_MODEL_TOOL  = "llama-3.3-70b-versatile"   # used for tool-calling rounds
+_MODEL_TEXT  = "llama-3.3-70b-versatile"   # used for final answer formatting
+
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are AskSportsFan360, a cricket analytics assistant with access to a real ball-by-ball database covering IPL 2008–2026, all T20 Internationals, BBL, PSL, SA20, CPL and more.
@@ -516,17 +525,38 @@ def ask(question: str):
     )
 
     # ── Round 1: Let Groq decide which tool(s) to call ────────────────────────
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.1,
-            max_tokens=1000,
-        )
-    except Exception as e:
-        print(f"Groq round 1 error: {e}")
+    # Retry up to 2 times — llama-3.3-70b occasionally generates malformed tool JSON
+    response = None
+    for attempt in range(2):
+        try:
+            response = groq_client.chat.completions.create(
+                model=_MODEL_TOOL,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0.1,
+                max_tokens=1000,
+            )
+            break  # success
+        except Exception as e:
+            err_str = str(e)
+            print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
+            if attempt == 1 or "tool_use_failed" not in err_str:
+                # Non-retryable error or out of retries — fall back to knowledge answer
+                try:
+                    fallback = groq_client.chat.completions.create(
+                        model=_MODEL_TOOL,
+                        messages=messages,
+                        temperature=0.1,
+                        max_tokens=600,
+                    )
+                    answer = fallback.choices[0].message.content.strip()
+                except Exception:
+                    answer = "Sorry, I'm having trouble right now. Please try again."
+                save_context(question, answer)
+                return {"answer": answer, "chart_title": "", "chart_data": []}
+
+    if response is None:
         return {"answer": "Sorry, I'm having trouble right now. Please try again.",
                 "chart_title": "", "chart_data": []}
 
@@ -581,7 +611,7 @@ def ask(question: str):
 
     try:
         response2 = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=_MODEL_TOOL,
             messages=messages,
             temperature=0.1,
             max_tokens=600,
@@ -663,7 +693,7 @@ def match_commentary(team1: str, team2: str, status: str):
     prompt = f"Match: {team1} vs {team2}\nStatus: {status}\nGive short live commentary in 2-3 lines."
     try:
         res = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=_MODEL_TOOL,
             messages=[
                 {"role": "system", "content": "You are a professional cricket commentator."},
                 {"role": "user",   "content": prompt},
