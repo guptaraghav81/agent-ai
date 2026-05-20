@@ -606,7 +606,32 @@ def _build_answer(question: str, tool_results: list) -> str:
             continue
 
         # ── Leaderboard ───────────────────────────────────────────────────────
-        if "rows" in r and r["rows"]:
+        # ── Win rate (must check before generic rows) ────────────────────────
+        if r.get("type") == "win_rate":
+            rows = r.get("rows", [])
+            comp = r.get("competition", "IPL")
+            team = r.get("team")
+            if not rows:
+                parts.append("I don't have win rate data for that team.")
+                continue
+            if team and len(rows) == 1:
+                row = rows[0]
+                parts.append(
+                    f"**{row['team']}** win rate in {comp}:\n"
+                    f"- **Matches played:** {row['matches']}\n"
+                    f"- **Wins:** {row['wins']}\n"
+                    f"- **Win rate:** **{row['win_rate']}%**"
+                )
+            else:
+                lines_out = [f"**{comp} Win Rate — All Teams:**\n"]
+                for row in rows:
+                    lines_out.append(
+                        f"{row['rank']}. **{row['team']}** — "
+                        f"{row['win_rate']}% ({row['wins']}W / {row['matches']} matches)"
+                    )
+                parts.append("\n".join(lines_out))
+
+        elif "rows" in r and r["rows"]:
             rows   = r["rows"]
             stat   = r.get("stat", "value")
             season = r.get("season", "")
@@ -703,30 +728,6 @@ def _build_answer(question: str, tool_results: list) -> str:
                 )
             parts.append("\n".join(lines))
 
-        # ── Win rate ──────────────────────────────────────────────────────────
-        elif r.get("type") == "win_rate":
-            rows = r.get("rows", [])
-            comp = r.get("competition", "IPL")
-            team = r.get("team")
-            if not rows:
-                parts.append("I don't have win rate data for that team.")
-                continue
-            if team and len(rows) == 1:
-                row = rows[0]
-                parts.append(
-                    f"**{row['team']}** win rate in {comp}:\n"
-                    f"- **Matches played:** {row['matches']}\n"
-                    f"- **Wins:** {row['wins']}\n"
-                    f"- **Win rate:** **{row['win_rate']}%**"
-                )
-            else:
-                lines = [f"**{comp} Win Rate — All Teams:**\n"]
-                for row in rows:
-                    lines.append(
-                        f"{row['rank']}. **{row['team']}** — "
-                        f"{row['win_rate']}% ({row['wins']}W / {row['matches']} matches)"
-                    )
-                parts.append("\n".join(lines))
 
         # ── Standings ─────────────────────────────────────────────────────────
         elif "standings" in r:
