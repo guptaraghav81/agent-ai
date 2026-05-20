@@ -61,7 +61,7 @@ TOOLS = [
                     },
                     "prefix": {
                         "type": "string",
-                        "enum": ["IPL","T20I","IPL26","Overall","2025"],
+                        "enum": ["IPL","T20I","IPL26","Overall"],
                         "description": "Competition/period context"
                     },
                     "n": {
@@ -133,7 +133,7 @@ TOOLS = [
                     "player": {"type": "string", "description": "Player name"},
                     "prefix": {
                         "type": "string",
-                        "enum": ["IPL","T20I","IPL26","Overall","2025"],
+                        "enum": ["IPL","T20I","IPL26","Overall"],
                         "description": "Competition context. Default IPL",
                         "default": "IPL"
                     }
@@ -289,7 +289,7 @@ TOOLS = [
                     "player2": {"type": "string"},
                     "prefix":  {
                         "type": "string",
-                        "enum": ["IPL","T20I","IPL26","Overall","2025"],
+                        "enum": ["IPL","T20I","IPL26","Overall"],
                         "default": "IPL"
                     }
                 },
@@ -350,8 +350,6 @@ TOOLS = [
 
 def _execute_tool(name: str, args: dict) -> dict:
     """Call the appropriate data_loader function and return structured result."""
-    if args is None:
-        args = {}
     # Groq sometimes sends n as a string — coerce to int defensively
     if "n" in args:
         try:
@@ -807,8 +805,13 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
     if "rows" in tool_result and tool_result["rows"]:
         rows  = tool_result["rows"]
         stat  = tool_result.get("stat", "value")
-        title = f"Top {len(rows)} — {stat}"
-        data  = [{"player": r["player"], "value": r["value"]} for r in rows]
+        # Win rate rows use 'team' key, leaderboard rows use 'player'
+        if tool_result.get("type") == "win_rate":
+            title = f"IPL Win Rate"
+            data  = [{"player": r["team"], "value": r["win_rate"]} for r in rows]
+        else:
+            title = f"Top {len(rows)} — {stat}"
+            data  = [{"player": r.get("player", r.get("team", "?")), "value": r["value"]} for r in rows]
         return title, data
 
     if "matchup" in tool_result:
@@ -916,30 +919,11 @@ def ask(question: str):
         except Exception as e:
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
-
-            # On second failure, try to salvage tool call from failed_generation
-            if attempt == 1 and "failed_generation" in err_str:
-                try:
-                    import re as _re
-                    m = _re.search(r'<function=(\w+)[({>](.*?)[)}]?</function>', err_str, _re.DOTALL)
-                    if m:
-                        fn_name = m.group(1)
-                        fn_args_str = m.group(2).strip().strip("()")
-                        fn_args = json.loads(fn_args_str)
-                        print(f"Salvaged tool call: {fn_name}({fn_args})")
-                        result = _execute_tool(fn_name, fn_args)
-                        if "error" not in result:
-                            chart_title, chart_data = _extract_chart(fn_name, result)
-                            answer = _build_answer(question, [{"tool_name": fn_name, "result": result}])
-                            save_context(question, answer)
-                            return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
-                except Exception as salvage_err:
-                    print(f"Salvage failed: {salvage_err}")
-
             if attempt == 1 or "tool_use_failed" not in err_str:
+                # Non-retryable or out of retries — fall back to plain answer
                 try:
                     fallback = groq_client.chat.completions.create(
-                        model=_MODEL_TOOL,
+                        model="llama-3.3-70b-versatile",
                         messages=messages,
                         temperature=0.1,
                         max_tokens=600,
