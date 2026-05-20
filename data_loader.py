@@ -139,42 +139,6 @@ def load():
             if u in _display_map)
     )
 
-    # ── Manual aliases for full names Groq commonly generates ─────────────────
-    _MANUAL_ALIASES = {
-        "sunil narine": "SP Narine", "sunil philip narine": "SP Narine",
-        "jasprit bumrah": "JJ Bumrah", "virat kohli": "V Kohli",
-        "rohit sharma": "RG Sharma", "ms dhoni": "MS Dhoni",
-        "mahendra singh dhoni": "MS Dhoni", "kl rahul": "KL Rahul",
-        "shubman gill": "S Gill", "hardik pandya": "HH Pandya",
-        "ravindra jadeja": "RA Jadeja", "yuzvendra chahal": "YS Chahal",
-        "bhuvneshwar kumar": "B Kumar", "mohammed shami": "Mohammed Shami",
-        "mohammed siraj": "Mohammed Siraj", "ravichandran ashwin": "R Ashwin",
-        "shreyas iyer": "SS Iyer", "rishabh pant": "RR Pant",
-        "david warner": "DA Warner", "kane williamson": "KS Williamson",
-        "jos buttler": "JC Buttler", "rashid khan": "Rashid Khan",
-        "chris gayle": "CH Gayle", "ab de villiers": "AB de Villiers",
-        "ab devilliers": "AB de Villiers", "faf du plessis": "F du Plessis",
-        "quinton de kock": "Q de Kock", "andre russell": "AD Russell",
-        "kieron pollard": "KA Pollard", "josh hazlewood": "JR Hazlewood",
-        "trent boult": "TA Boult", "pat cummins": "PJ Cummins",
-        "mitchell starc": "MA Starc", "sam curran": "SM Curran",
-        "liam livingstone": "LS Livingstone", "jonny bairstow": "JM Bairstow",
-        "ben stokes": "BA Stokes", "nicholas pooran": "N Pooran",
-        "ishan kishan": "IK Kishan", "sanju samson": "SV Samson",
-        "axar patel": "AR Patel", "washington sundar": "W Sundar",
-        "abhishek sharma": "Abhishek Sharma", "prithvi shaw": "PP Shaw",
-    }
-    for alias, short_name in _MANUAL_ALIASES.items():
-        match = registry_df[registry_df["unique_name"].str.contains(
-            short_name.replace(" ", ".*"), case=False, na=False, regex=True
-        )]
-        if not match.empty:
-            _player_index[alias] = match.iloc[0]["unique_name"]
-        else:
-            existing = _player_index.get(short_name.lower())
-            if existing:
-                _player_index[alias] = existing
-
     _loaded = True
     print(f"Data layer ready — {len(_player_names):,} players indexed")
 
@@ -609,6 +573,28 @@ def _normalize_team(name: str) -> str:
             return v
     return name
 
+def _extract_team_from_question(question: str) -> str | None:
+    """Extract a single team name from a question using the alias map."""
+    q = question.lower()
+    aliases = {
+        "mi": "Mumbai Indians", "mumbai": "Mumbai Indians",
+        "csk": "Chennai Super Kings", "chennai": "Chennai Super Kings",
+        "rcb": "Royal Challengers Bengaluru", "bangalore": "Royal Challengers Bengaluru",
+        "bengaluru": "Royal Challengers Bengaluru", "royal challengers": "Royal Challengers Bengaluru",
+        "kkr": "Kolkata Knight Riders", "kolkata": "Kolkata Knight Riders",
+        "srh": "Sunrisers Hyderabad", "sunrisers": "Sunrisers Hyderabad", "hyderabad": "Sunrisers Hyderabad",
+        "rr": "Rajasthan Royals", "rajasthan": "Rajasthan Royals",
+        "pbks": "Punjab Kings", "punjab": "Punjab Kings", "kxip": "Punjab Kings",
+        "dc": "Delhi Capitals", "delhi": "Delhi Capitals",
+        "gt": "Gujarat Titans", "gujarat": "Gujarat Titans",
+        "lsg": "Lucknow Super Giants", "lucknow": "Lucknow Super Giants",
+    }
+    for alias, full_name in aliases.items():
+        if alias in q.split() or alias in q:
+            return full_name
+    return None
+
+
 def get_team_vs_team(team1: str, team2: str,
                      competition: str = "IPL",
                      season: int = None) -> dict | None:
@@ -678,9 +664,18 @@ def get_team_win_rate(team: str = None, competition: str = "IPL") -> list[dict]:
     if df.empty:
         return []
 
+    # 'won' column is unreliable for defunct teams (always False).
+    # Derive wins by checking if opponent lost (opponent's won=False in same match).
+    df = df.copy()
+    opp = team_records_df[["match_id","team","won"]].rename(
+        columns={"team": "opponent", "won": "opp_won"}
+    )
+    df = df.merge(opp, on=["match_id","opponent"], how="left")
+    # A team won if either own 'won'=True OR opponent 'won'=False
+    df["win"] = df["won"].fillna(False) | (~df["opp_won"].fillna(True))
     stats = df.groupby("team").agg(
         matches=("match_id", "nunique"),
-        wins=("won", "sum")
+        wins=("win", "sum")
     ).reset_index()
     stats["win_rate"] = (stats["wins"] / stats["matches"] * 100).round(1)
     stats = stats[stats["matches"] >= 10]  # exclude tiny sample teams

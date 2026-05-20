@@ -469,12 +469,16 @@ def _execute_tool(name: str, args: dict) -> dict:
             return result
 
         elif name == "get_team_win_rate":
+            team_arg = args.get("team")
+            # If Groq didn't pass team param, try to extract from question
+            if not team_arg:
+                team_arg = dl._extract_team_from_question(question)
             rows = dl.get_team_win_rate(
-                team=args.get("team"),
+                team=team_arg,
                 competition=args.get("competition", "IPL")
             )
             return {"rows": rows, "type": "win_rate",
-                    "team": args.get("team"), "competition": args.get("competition","IPL")}
+                    "team": team_arg, "competition": args.get("competition","IPL")}
 
         elif name == "get_standings":
             return {"standings": dl.get_standings()}
@@ -672,7 +676,7 @@ def _build_answer(question: str, tool_results: list) -> str:
                 f"- **Dismissals:** {m['dismissed']}\n"
                 f"- **Strike rate:** {_fmt(m.get('sr'))}\n"
                 f"- **Dot ball %:** {_fmt(m.get('dot_pct'))}%\n"
-                f"- **Dismissal rate:** every {_fmt(m.get('dismiss_rate'))} balls"
+                f"- **Dismissal rate:** {_fmt(m.get('dismiss_rate'))}% (once every {_fmt(round(m['balls']/m['dismissed'],1)) if m.get('dismissed') else 'N/A'} balls)"
             )
 
         # ── Batter weaknesses ─────────────────────────────────────────────────
@@ -823,23 +827,15 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
         stat  = tool_result.get("stat", "value")
         # Win rate rows use 'team' key, leaderboard rows use 'player'
         if tool_result.get("type") == "win_rate":
-            return "", []  # No chart for win rate
+            title = f"IPL Win Rate"
+            data  = [{"player": r["team"], "value": r["win_rate"]} for r in rows]
         else:
             title = f"Top {len(rows)} — {stat}"
             data  = [{"player": r.get("player", r.get("team", "?")), "value": r["value"]} for r in rows]
         return title, data
 
     if "matchup" in tool_result:
-        m = tool_result["matchup"]
-        title = f"{m['batter']} vs {m['bowler']} — {m['competition']} {m['phase']}"
-        data  = [
-            {"player": "Balls",      "value": m["balls"]},
-            {"player": "Runs",       "value": m["runs"]},
-            {"player": "Dismissals", "value": m["dismissed"]},
-            {"player": "Fours",      "value": m["fours"]},
-            {"player": "Sixes",      "value": m["sixes"]},
-        ]
-        return title, data
+        return "", []  # No chart for matchups
 
     if "weak_against" in tool_result:
         weak  = tool_result["weak_against"]
