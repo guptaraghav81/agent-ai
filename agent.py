@@ -493,7 +493,7 @@ def _format_tool_result_readable(result: dict) -> str:
         ctx   = f"{comp} {season} {prefix}".strip() + (f" ({phase})" if phase != "ALL" else "")
         lines = [f"Top {len(rows)} by {stat} — {ctx}:"]
         for r in rows:
-            lines.append(f"  {r['rank']}. {r['player']} — {r['value']} {stat}")
+            lines.append(f"  {r['rank']}. {r.get('player', r.get('team', '?'))} — {r['value']} {stat}")
         if "winner" in result:
             w = result["winner"]
             lines.append(f"WINNER: {w['player']} with {w['value']} {stat}")
