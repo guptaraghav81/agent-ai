@@ -139,65 +139,39 @@ def load():
             if u in _display_map)
     )
 
-    # ── Manual aliases for common full names Groq generates ───────────────────
-    # Groq often uses full first names not in Cricsheet short format
+    # ── Manual aliases for full names Groq commonly generates ─────────────────
     _MANUAL_ALIASES = {
-        "sunil narine":       "SP Narine",
-        "sunil philip narine":"SP Narine",
-        "jasprit bumrah":     "JJ Bumrah",
-        "virat kohli":        "V Kohli",
-        "rohit sharma":       "RG Sharma",
-        "ms dhoni":           "MS Dhoni",
-        "mahendra singh dhoni":"MS Dhoni",
-        "kl rahul":           "KL Rahul",
-        "shubman gill":       "S Gill",
-        "hardik pandya":      "HH Pandya",
-        "ravindra jadeja":    "RA Jadeja",
-        "yuzvendra chahal":   "YS Chahal",
-        "bhuvneshwar kumar":  "B Kumar",
-        "mohammed shami":     "Mohammed Shami",
-        "mohammed siraj":     "Mohammed Siraj",
-        "ravichandran ashwin":"R Ashwin",
-        "shreyas iyer":       "SS Iyer",
-        "rishabh pant":       "RR Pant",
-        "david warner":       "DA Warner",
-        "kane williamson":    "KS Williamson",
-        "jos buttler":        "JC Buttler",
-        "rashid khan":        "Rashid Khan",
-        "chris gayle":        "CH Gayle",
-        "ab de villiers":     "AB de Villiers",
-        "ab devilliers":      "AB de Villiers",
-        "faf du plessis":     "F du Plessis",
-        "quinton de kock":    "Q de Kock",
-        "andre russell":      "AD Russell",
-        "pollard":            "KA Pollard",
-        "kieron pollard":     "KA Pollard",
-        "josh hazlewood":     "JR Hazlewood",
-        "trent boult":        "TA Boult",
-        "pat cummins":        "PJ Cummins",
-        "mitchell starc":     "MA Starc",
-        "sam curran":         "SM Curran",
-        "liam livingstone":   "LS Livingstone",
-        "jonny bairstow":     "JM Bairstow",
-        "ben stokes":         "BA Stokes",
-        "mark wood":          "MA Wood",
-        "nicholas pooran":    "N Pooran",
-        "ishan kishan":       "IK Kishan",
-        "sanju samson":       "SV Samson",
-        "prithvi shaw":       "PP Shaw",
-        "axar patel":         "AR Patel",
-        "washington sundar":  "W Sundar",
+        "sunil narine": "SP Narine", "sunil philip narine": "SP Narine",
+        "jasprit bumrah": "JJ Bumrah", "virat kohli": "V Kohli",
+        "rohit sharma": "RG Sharma", "ms dhoni": "MS Dhoni",
+        "mahendra singh dhoni": "MS Dhoni", "kl rahul": "KL Rahul",
+        "shubman gill": "S Gill", "hardik pandya": "HH Pandya",
+        "ravindra jadeja": "RA Jadeja", "yuzvendra chahal": "YS Chahal",
+        "bhuvneshwar kumar": "B Kumar", "mohammed shami": "Mohammed Shami",
+        "mohammed siraj": "Mohammed Siraj", "ravichandran ashwin": "R Ashwin",
+        "shreyas iyer": "SS Iyer", "rishabh pant": "RR Pant",
+        "david warner": "DA Warner", "kane williamson": "KS Williamson",
+        "jos buttler": "JC Buttler", "rashid khan": "Rashid Khan",
+        "chris gayle": "CH Gayle", "ab de villiers": "AB de Villiers",
+        "ab devilliers": "AB de Villiers", "faf du plessis": "F du Plessis",
+        "quinton de kock": "Q de Kock", "andre russell": "AD Russell",
+        "kieron pollard": "KA Pollard", "josh hazlewood": "JR Hazlewood",
+        "trent boult": "TA Boult", "pat cummins": "PJ Cummins",
+        "mitchell starc": "MA Starc", "sam curran": "SM Curran",
+        "liam livingstone": "LS Livingstone", "jonny bairstow": "JM Bairstow",
+        "ben stokes": "BA Stokes", "nicholas pooran": "N Pooran",
+        "ishan kishan": "IK Kishan", "sanju samson": "SV Samson",
+        "axar patel": "AR Patel", "washington sundar": "W Sundar",
+        "abhishek sharma": "Abhishek Sharma", "prithvi shaw": "PP Shaw",
     }
-    for alias, cricsheet_name in _MANUAL_ALIASES.items():
-        # Find the unique_name for this cricsheet short name
+    for alias, short_name in _MANUAL_ALIASES.items():
         match = registry_df[registry_df["unique_name"].str.contains(
-            cricsheet_name.replace(" ", ".*"), case=False, na=False, regex=True
+            short_name.replace(" ", ".*"), case=False, na=False, regex=True
         )]
         if not match.empty:
             _player_index[alias] = match.iloc[0]["unique_name"]
         else:
-            # Try direct lookup in existing index
-            existing = _player_index.get(cricsheet_name.lower())
+            existing = _player_index.get(short_name.lower())
             if existing:
                 _player_index[alias] = existing
 
@@ -692,6 +666,45 @@ IPL26_STANDINGS = [
     {"position": 9, "team": "Rajasthan Royals",            "played": 14, "won": 5, "lost": 9, "nr": 0, "points": 10, "nrr": -0.331},
     {"position":10, "team": "Lucknow Super Giants",        "played": 14, "won": 5, "lost": 9, "nr": 0, "points": 10, "nrr": -0.441},
 ]
+
+def get_team_win_rate(team: str = None, competition: str = "IPL") -> list[dict]:
+    """
+    Overall win rate for one team or all teams in a competition.
+    team: optional partial name e.g. 'Punjab', 'MI', 'CSK'
+    Returns list of dicts with team, matches, wins, win_rate
+    """
+    load()
+    df = team_records_df[team_records_df["competition"] == competition].copy()
+    if df.empty:
+        return []
+
+    stats = df.groupby("team").agg(
+        matches=("match_id", "nunique"),
+        wins=("won", "sum")
+    ).reset_index()
+    stats["win_rate"] = (stats["wins"] / stats["matches"] * 100).round(1)
+    stats = stats[stats["matches"] >= 10]  # exclude tiny sample teams
+    stats = stats.sort_values("win_rate", ascending=False).reset_index(drop=True)
+
+    if team:
+        # Filter to matching team
+        t_norm = _normalize_team(team)
+        stats = stats[
+            stats["team"].str.contains(team, case=False, na=False) |
+            (stats["team"] == t_norm)
+        ]
+
+    return [
+        {
+            "rank":     i + 1,
+            "team":     r["team"],
+            "matches":  int(r["matches"]),
+            "wins":     int(r["wins"]),
+            "win_rate": float(r["win_rate"]),
+        }
+        for i, r in stats.iterrows()
+    ]
+
 
 def get_standings() -> list[dict]:
     return IPL26_STANDINGS

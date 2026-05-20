@@ -45,12 +45,10 @@ TOOLS = [
         "function": {
             "name": "get_career_leaderboard",
             "description": (
-                "Get the top N players by a CAREER stat across all seasons. "
-                "Use ONLY for all-time leaderboards with no specific year: "
-                "'most IPL runs all time', 'best T20I economy ever', 'most Overall sixes'. "
-                "prefix: IPL=career IPL, T20I=career T20I, IPL26=IPL 2026 season only, Overall=all T20s. "
-                "NEVER use for questions mentioning a specific year like 2025, 2016, 2019 — "
-                "use get_season_leaderboard for those instead."
+                "Get the top N players by a career stat. Use for questions like "
+                "'most IPL runs', 'best T20I economy', 'most Overall sixes', "
+                "'best IPL26 bowling average', 'top form batters 2025'. "
+                "prefix options: IPL | T20I | IPL26 | Overall | 2025"
             ),
             "parameters": {
                 "type": "object",
@@ -63,8 +61,13 @@ TOOLS = [
                     },
                     "prefix": {
                         "type": "string",
-                        "enum": ["IPL","T20I","IPL26","Overall"],
-                        "description": "IPL=all-time IPL, T20I=all-time T20I, IPL26=2026 season only, Overall=all T20s. For any specific year use get_season_leaderboard."
+                        "enum": ["IPL","T20I","IPL26","Overall","2025"],
+                        "description": "Competition/period context"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "prefix"]
@@ -104,6 +107,11 @@ TOOLS = [
                         "enum": ["ALL","PP","MID","DEATH"],
                         "description": "Match phase. Default ALL",
                         "default": "ALL"
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of results (default 5)",
+                        "default": 5
                     }
                 },
                 "required": ["stat", "season"]
@@ -292,6 +300,31 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_team_win_rate",
+            "description": (
+                "Get overall win rate / win percentage for one IPL team or all teams. "
+                "Use for 'PBKS win rate', 'MI win percentage', 'SRH win record', "
+                "'which team has best win rate', 'most successful team by win %'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team": {
+                        "type": "string",
+                        "description": "Team name or abbreviation. Omit to get all teams ranked."
+                    },
+                    "competition": {
+                        "type": "string",
+                        "default": "IPL"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_standings",
             "description": "Get the IPL 2026 points table / standings.",
             "parameters": {"type": "object", "properties": {}}
@@ -424,6 +457,14 @@ def _execute_tool(name: str, args: dict) -> dict:
             result = dl.compare_players(args["player1"], args["player2"], args.get("prefix","IPL"))
             return result
 
+        elif name == "get_team_win_rate":
+            rows = dl.get_team_win_rate(
+                team=args.get("team"),
+                competition=args.get("competition", "IPL")
+            )
+            return {"rows": rows, "type": "win_rate",
+                    "team": args.get("team"), "competition": args.get("competition","IPL")}
+
         elif name == "get_standings":
             return {"standings": dl.get_standings()}
 
@@ -548,15 +589,12 @@ def _build_answer(question: str, tool_results: list) -> str:
         name = tr["tool_name"]
 
         if "error" in r:
-            parts.append("I don't have data for that.")
+            parts.append(f"I don't have data for that: {r['error']}")
             continue
 
         # ── Leaderboard ───────────────────────────────────────────────────────
-        if "rows" in r:
-            rows = r["rows"]
-            if not rows:
-                parts.append("I don't have data for that season or competition.")
-                continue
+        if "rows" in r and r["rows"]:
+            rows   = r["rows"]
             stat   = r.get("stat", "value")
             season = r.get("season", "")
             comp   = r.get("competition", "")
@@ -652,6 +690,31 @@ def _build_answer(question: str, tool_results: list) -> str:
                 )
             parts.append("\n".join(lines))
 
+        # ── Win rate ──────────────────────────────────────────────────────────
+        elif r.get("type") == "win_rate":
+            rows = r.get("rows", [])
+            comp = r.get("competition", "IPL")
+            team = r.get("team")
+            if not rows:
+                parts.append("I don't have win rate data for that team.")
+                continue
+            if team and len(rows) == 1:
+                row = rows[0]
+                parts.append(
+                    f"**{row['team']}** win rate in {comp}:\n"
+                    f"- **Matches played:** {row['matches']}\n"
+                    f"- **Wins:** {row['wins']}\n"
+                    f"- **Win rate:** **{row['win_rate']}%**"
+                )
+            else:
+                lines = [f"**{comp} Win Rate — All Teams:**\n"]
+                for row in rows:
+                    lines.append(
+                        f"{row['rank']}. **{row['team']}** — "
+                        f"{row['win_rate']}% ({row['wins']}W / {row['matches']} matches)"
+                    )
+                parts.append("\n".join(lines))
+
         # ── Standings ─────────────────────────────────────────────────────────
         elif "standings" in r:
             lines = ["**IPL 2026 Points Table:**\n"]
@@ -672,16 +735,23 @@ def _build_answer(question: str, tool_results: list) -> str:
 
         # ── Team vs Team ──────────────────────────────────────────────────────
         elif "team1" in r:
-            t1, t2 = r["team1"], r["team2"]
-            comp   = r.get("competition", "IPL")
-            season = r.get("season")
-            ctx    = f"{comp} {season}" if season else f"all-time {comp}"
+            t1, t2   = r["team1"], r["team2"]
+            comp     = r.get("competition", "IPL")
+            season   = r.get("season")
+            ctx      = f"{comp} {season}" if season else f"all-time {comp}"
+            matches  = r["matches"]
+            t1_wins  = r["team1_wins"]
+            t2_wins  = r["team2_wins"]
+            nr       = r.get("no_result", 0)
+            decided  = matches - nr
+            t1_pct   = round(t1_wins / decided * 100, 1) if decided else 0
+            t2_pct   = round(t2_wins / decided * 100, 1) if decided else 0
             parts.append(
                 f"**{t1} vs {t2}** — {ctx}:\n"
-                f"- Total matches: **{r['matches']}**\n"
-                f"- **{t1}** wins: **{r['team1_wins']}**\n"
-                f"- **{t2}** wins: **{r['team2_wins']}**\n"
-                f"- No result: {r.get('no_result', 0)}"
+                f"- Total matches: **{matches}**\n"
+                f"- **{t1}** wins: **{t1_wins}** ({t1_pct}%)\n"
+                f"- **{t2}** wins: **{t2_wins}** ({t2_pct}%)\n"
+                f"- No result: {nr}"
             )
 
         # ── Venue stats ───────────────────────────────────────────────────────
@@ -847,7 +917,7 @@ def ask(question: str):
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
 
-            # On second failure, try to salvage the tool call from failed_generation
+            # On second failure, try to salvage tool call from failed_generation
             if attempt == 1 and "failed_generation" in err_str:
                 try:
                     import re as _re
