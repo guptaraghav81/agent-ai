@@ -139,6 +139,66 @@ def load():
             if u in _display_map)
     )
 
+    # ── Manual aliases for full names Groq commonly generates ─────────────────
+    _MANUAL_ALIASES = {
+        "sunil narine": "SP Narine", "sunil philip narine": "SP Narine",
+        "jasprit bumrah": "JJ Bumrah", "bumrah": "JJ Bumrah",
+        "virat kohli": "V Kohli", "virat": "V Kohli",
+        "rohit sharma": "RG Sharma", "rohit": "RG Sharma", "rg sharma": "RG Sharma",
+        "ms dhoni": "MS Dhoni", "dhoni": "MS Dhoni",
+        "mahendra singh dhoni": "MS Dhoni",
+        "kl rahul": "KL Rahul",
+        "shubman gill": "S Gill", "gill": "S Gill",
+        "hardik pandya": "HH Pandya",
+        "ravindra jadeja": "RA Jadeja",
+        "yuzvendra chahal": "YS Chahal", "chahal": "YS Chahal",
+        "bhuvneshwar kumar": "B Kumar",
+        "mohammed shami": "Mohammed Shami",
+        "mohammed siraj": "Mohammed Siraj",
+        "ravichandran ashwin": "R Ashwin",
+        "shreyas iyer": "SS Iyer",
+        "rishabh pant": "RR Pant",
+        "david warner": "DA Warner",
+        "kane williamson": "KS Williamson",
+        "jos buttler": "JC Buttler",
+        "rashid khan": "Rashid Khan",
+        "chris gayle": "CH Gayle",
+        "ab de villiers": "AB de Villiers", "ab devilliers": "AB de Villiers",
+        "faf du plessis": "F du Plessis",
+        "quinton de kock": "Q de Kock",
+        "andre russell": "AD Russell",
+        "kieron pollard": "KA Pollard",
+        "josh hazlewood": "JR Hazlewood", "hazlewood": "JR Hazlewood",
+        "trent boult": "TA Boult",
+        "pat cummins": "PJ Cummins",
+        "mitchell starc": "MA Starc",
+        "sam curran": "SM Curran",
+        "nicholas pooran": "N Pooran",
+        "ishan kishan": "IK Kishan",
+        "sanju samson": "SV Samson",
+        "axar patel": "AR Patel",
+        "washington sundar": "W Sundar",
+        "abhishek sharma": "Abhishek Sharma",
+        "prithvi shaw": "PP Shaw",
+        "yashasvi jaiswal": "YBK Jaiswal", "jaiswal": "YBK Jaiswal",
+        "ruturaj gaikwad": "RD Gaikwad", "gaikwad": "RD Gaikwad",
+        "tilak varma": "T Varma",
+        "suryakumar yadav": "SA Yadav", "surya": "SA Yadav",
+        "karun nair": "KK Nair",
+        "nitish reddy": "N Kumar Reddy",
+        "narine": "SP Narine",
+    }
+    for alias, short_name in _MANUAL_ALIASES.items():
+        match = registry_df[registry_df["unique_name"].str.contains(
+            short_name.replace(" ", ".*"), case=False, na=False, regex=True
+        )]
+        if not match.empty:
+            _player_index[alias] = match.iloc[0]["unique_name"]
+        else:
+            existing = _player_index.get(short_name.lower())
+            if existing:
+                _player_index[alias] = existing
+
     _loaded = True
     print(f"Data layer ready — {len(_player_names):,} players indexed")
 
@@ -682,12 +742,14 @@ def get_team_win_rate(team: str = None, competition: str = "IPL") -> list[dict]:
     stats = stats.sort_values("win_rate", ascending=False).reset_index(drop=True)
 
     if team:
-        # Filter to matching team
+        # Normalize and filter to single team
         t_norm = _normalize_team(team)
-        stats = stats[
-            stats["team"].str.contains(team, case=False, na=False) |
-            (stats["team"] == t_norm)
-        ]
+        # Try exact match first, then partial
+        exact = stats[stats["team"] == t_norm]
+        if not exact.empty:
+            stats = exact
+        else:
+            stats = stats[stats["team"].str.contains(team, case=False, na=False)]
 
     return [
         {
