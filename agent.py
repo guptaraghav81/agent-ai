@@ -256,9 +256,10 @@ TOOLS = [
         "function": {
             "name": "get_team_vs_team",
             "description": (
-                "Get head-to-head win/loss record between exactly two named IPL teams. "
-                "ONLY use when the question explicitly names two teams and asks for their record, "
-                "e.g. 'MI vs CSK head to head', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
+                "Get head-to-head win/loss record and win rate between exactly two named IPL teams. "
+                "ONLY use when the question names TWO teams together, "
+                "e.g. 'MI vs CSK', 'GT vs RR win rate', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
+                "Even if the word 'win rate' appears, if TWO teams are named use this tool, not get_team_win_rate. "
                 "Do NOT use for questions about who won a tournament, championship, or title — "
                 "use get_titles for that. Do NOT use when only one team is mentioned."
             ),
@@ -303,8 +304,8 @@ TOOLS = [
             "name": "get_team_win_rate",
             "description": (
                 "Get overall win rate / win percentage for one IPL team or all teams. "
-                "Use for 'PBKS win rate', 'MI win percentage', 'SRH win record', "
-                "'which team has best win rate', 'most successful team by win %'."
+                "Use ONLY when ONE team is mentioned. e.g. 'PBKS win rate', 'MI win percentage', 'SRH win record', "
+                "'which team has best win rate'. Do NOT use when two teams are both named — use get_team_vs_team instead."
             ),
             "parameters": {
                 "type": "object",
