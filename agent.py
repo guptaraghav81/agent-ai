@@ -79,7 +79,7 @@ TOOLS = [
         "function": {
             "name": "get_season_leaderboard",
             "description": (
-                "Get the top N players by a stat in a specific season and competition. "
+                "Get the top N players by a stat in a specific season and competition. ALWAYS use this for any specific year like 2025, 2024, 2019. "
                 "Use for questions like 'most runs in IPL 2019', 'best economy in IPL 2023 powerplay', "
                 "'Purple Cap IPL 2020', 'Orange Cap 2016', 'best SR in T20I 2024'. "
                 "phase options: ALL | PP | MID | DEATH"
@@ -350,6 +350,8 @@ TOOLS = [
 
 def _execute_tool(name: str, args: dict) -> dict:
     """Call the appropriate data_loader function and return structured result."""
+    if args is None:
+        args = {}
     # Groq sometimes sends n as a string — coerce to int defensively
     if "n" in args:
         try:
@@ -358,13 +360,24 @@ def _execute_tool(name: str, args: dict) -> dict:
             args["n"] = 5
     try:
         if name == "get_career_leaderboard":
-            n = args.get("n", 5)
-            rows = dl.get_career_leaderboard(
-                stat=args["stat"],
-                prefix=args.get("prefix", "IPL"),
-                n=n
-            )
-            result = {"rows": rows, "stat": args["stat"], "prefix": args.get("prefix","IPL")}
+            n      = args.get("n", 5)
+            prefix = args.get("prefix", "IPL")
+            stat   = args["stat"]
+
+            # Intercept: if Groq sends prefix="2025" (rejected by schema but salvaged),
+            # redirect to season leaderboard for IPL 2025
+            if prefix == "2025":
+                rows = dl.get_season_leaderboard(
+                    stat=stat, season=2025, competition="IPL", phase="ALL", n=n
+                )
+                result = {"rows": rows, "stat": stat, "season": 2025,
+                          "competition": "IPL", "phase": "ALL"}
+                if n == 1 and rows:
+                    result["winner"] = rows[0]
+                return result
+
+            rows = dl.get_career_leaderboard(stat=stat, prefix=prefix, n=n)
+            result = {"rows": rows, "stat": stat, "prefix": prefix}
             if n == 1 and rows:
                 result["winner"] = rows[0]
             return result
@@ -493,7 +506,9 @@ def _format_tool_result_readable(result: dict) -> str:
         ctx   = f"{comp} {season} {prefix}".strip() + (f" ({phase})" if phase != "ALL" else "")
         lines = [f"Top {len(rows)} by {stat} — {ctx}:"]
         for r in rows:
-            lines.append(f"  {r['rank']}. {r.get('player', r.get('team', '?'))} — {r['value']} {stat}")
+            name = r.get('player', r.get('team', '?'))
+            val  = r.get('value', r.get('win_rate', r.get('wins', '?')))
+            lines.append(f"  {r['rank']}. {name} — {val} {stat}")
         if "winner" in result:
             w = result["winner"]
             lines.append(f"WINNER: {w['player']} with {w['value']} {stat}")
@@ -873,6 +888,7 @@ ABSOLUTE RULES — these override everything:
 6. For knowledge questions (rules, history, trivia) with no tool result, answer freely but say "Note: general knowledge, not from live database."
 7. Keep answers concise. Bold key numbers and names with **.
 8. For matchup answers always state the number of balls — context matters for small samples.
+9. For ANY question mentioning a specific year (2025, 2024, 2023, 2019 etc.) ALWAYS use get_season_leaderboard with that season year — NEVER use get_career_leaderboard for year-specific questions.
 """
 
 
@@ -919,6 +935,26 @@ def ask(question: str):
         except Exception as e:
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
+
+            # On second failure, try to salvage tool call from failed_generation
+            if attempt == 1 and "failed_generation" in err_str:
+                try:
+                    import re as _re
+                    m = _re.search(r'<function=(\w+)[({>](.*?)[)}]?</function>', err_str, _re.DOTALL)
+                    if m:
+                        fn_name = m.group(1)
+                        fn_args_str = m.group(2).strip().strip("()")
+                        fn_args = json.loads(fn_args_str)
+                        print(f"Salvaged tool call: {fn_name}({fn_args})")
+                        result = _execute_tool(fn_name, fn_args)
+                        if "error" not in result:
+                            chart_title, chart_data = _extract_chart(fn_name, result)
+                            answer = _build_answer(question, [{"tool_name": fn_name, "result": result}])
+                            save_context(question, answer)
+                            return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
+                except Exception as salvage_err:
+                    print(f"Salvage failed: {salvage_err}")
+
             if attempt == 1 or "tool_use_failed" not in err_str:
                 # Non-retryable or out of retries — fall back to plain answer
                 try:
