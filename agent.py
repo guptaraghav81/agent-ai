@@ -301,10 +301,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_team_win_rate",
-            "description": (
-                "Get overall win rate / win percentage for one IPL team or all teams. "
-                "Use for 'PBKS win rate', 'MI win percentage', 'SRH win record', "
-                "'which team has best win rate', 'most successful team by win %'."
+                        "description": (
+                "Get overall win rate for a SINGLE IPL team. "
+                "ONLY use when exactly ONE team is mentioned with no opponent. "
+                "e.g. 'RR win rate', 'MI win percentage', 'CSK win record', 'SRH win %'. "
+                "If TWO teams are mentioned together (e.g. 'MI vs KKR win rate'), "
+                "use get_team_vs_team instead."
             ),
             "parameters": {
                 "type": "object",
@@ -469,16 +471,12 @@ def _execute_tool(name: str, args: dict) -> dict:
             return result
 
         elif name == "get_team_win_rate":
-            team_arg = args.get("team")
-            # If Groq didn't pass team param, try to extract from question
-            if not team_arg:
-                team_arg = dl._extract_team_from_question(question)
             rows = dl.get_team_win_rate(
-                team=team_arg,
+                team=args.get("team"),
                 competition=args.get("competition", "IPL")
             )
             return {"rows": rows, "type": "win_rate",
-                    "team": team_arg, "competition": args.get("competition","IPL")}
+                    "team": args.get("team"), "competition": args.get("competition","IPL")}
 
         elif name == "get_standings":
             return {"standings": dl.get_standings()}
@@ -676,7 +674,7 @@ def _build_answer(question: str, tool_results: list) -> str:
                 f"- **Dismissals:** {m['dismissed']}\n"
                 f"- **Strike rate:** {_fmt(m.get('sr'))}\n"
                 f"- **Dot ball %:** {_fmt(m.get('dot_pct'))}%\n"
-                f"- **Dismissal rate:** {_fmt(m.get('dismiss_rate'))}% (once every {_fmt(round(m['balls']/m['dismissed'],1)) if m.get('dismissed') else 'N/A'} balls)"
+                f"- **Dismissal rate:** every {_fmt(m.get('dismiss_rate'))} balls"
             )
 
         # ── Batter weaknesses ─────────────────────────────────────────────────
@@ -827,15 +825,23 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
         stat  = tool_result.get("stat", "value")
         # Win rate rows use 'team' key, leaderboard rows use 'player'
         if tool_result.get("type") == "win_rate":
-            title = f"IPL Win Rate"
-            data  = [{"player": r["team"], "value": r["win_rate"]} for r in rows]
+            return "", []  # No chart for win rate
         else:
             title = f"Top {len(rows)} — {stat}"
             data  = [{"player": r.get("player", r.get("team", "?")), "value": r["value"]} for r in rows]
         return title, data
 
     if "matchup" in tool_result:
-        return "", []  # No chart for matchups
+        m = tool_result["matchup"]
+        title = f"{m['batter']} vs {m['bowler']} — {m['competition']} {m['phase']}"
+        data  = [
+            {"player": "Balls",      "value": m["balls"]},
+            {"player": "Runs",       "value": m["runs"]},
+            {"player": "Dismissals", "value": m["dismissed"]},
+            {"player": "Fours",      "value": m["fours"]},
+            {"player": "Sixes",      "value": m["sixes"]},
+        ]
+        return title, data
 
     if "weak_against" in tool_result:
         weak  = tool_result["weak_against"]
@@ -941,6 +947,9 @@ def ask(question: str):
                         fn_name = m.group(1)
                         fn_args_str = m.group(2).strip().strip("()")
                         fn_args = json.loads(fn_args_str)
+                        # Ensure matchup defaults to ALL phase
+                        if fn_name == "get_matchup" and "phase" not in fn_args:
+                            fn_args["phase"] = "ALL"
                         print(f"Salvaged tool call: {fn_name}({fn_args})")
                         result = _execute_tool(fn_name, fn_args)
                         if "error" not in result:
