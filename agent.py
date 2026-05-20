@@ -256,10 +256,9 @@ TOOLS = [
         "function": {
             "name": "get_team_vs_team",
             "description": (
-                "Get head-to-head win/loss record and win rate between exactly two named IPL teams. "
-                "ONLY use when the question names TWO teams together, "
-                "e.g. 'MI vs CSK', 'GT vs RR win rate', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
-                "Even if the word 'win rate' appears, if TWO teams are named use this tool, not get_team_win_rate. "
+                "Get head-to-head win/loss record between exactly two named IPL teams. "
+                "ONLY use when the question explicitly names two teams and asks for their record, "
+                "e.g. 'MI vs CSK head to head', 'KKR vs RCB all time', 'RR vs SRH in 2023'. "
                 "Do NOT use for questions about who won a tournament, championship, or title — "
                 "use get_titles for that. Do NOT use when only one team is mentioned."
             ),
@@ -304,8 +303,8 @@ TOOLS = [
             "name": "get_team_win_rate",
             "description": (
                 "Get overall win rate / win percentage for one IPL team or all teams. "
-                "Use ONLY when ONE team is mentioned. e.g. 'PBKS win rate', 'MI win percentage', 'SRH win record', "
-                "'which team has best win rate'. Do NOT use when two teams are both named — use get_team_vs_team instead."
+                "Use for 'PBKS win rate', 'MI win percentage', 'SRH win record', "
+                "'which team has best win rate', 'most successful team by win %'."
             ),
             "parameters": {
                 "type": "object",
@@ -824,8 +823,7 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
         stat  = tool_result.get("stat", "value")
         # Win rate rows use 'team' key, leaderboard rows use 'player'
         if tool_result.get("type") == "win_rate":
-            title = f"IPL Win Rate"
-            data  = [{"player": r["team"], "value": r["win_rate"]} for r in rows]
+            return "", []  # No chart for win rate
         else:
             title = f"Top {len(rows)} — {stat}"
             data  = [{"player": r.get("player", r.get("team", "?")), "value": r["value"]} for r in rows]
