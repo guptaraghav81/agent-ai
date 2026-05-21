@@ -5,6 +5,8 @@ import random
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
 from groq import Groq
 
 import data_loader as dl
@@ -301,7 +303,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_team_win_rate",
-                        "description": (
+            "description": (
                 "Get overall win rate for a SINGLE IPL team. "
                 "ONLY use when exactly ONE team is mentioned with no opponent. "
                 "e.g. 'RR win rate', 'MI win percentage', 'CSK win record', 'SRH win %'. "
@@ -607,7 +609,6 @@ def _build_answer(question: str, tool_results: list) -> str:
             parts.append(f"I don't have data for that: {r['error']}")
             continue
 
-        # ── Leaderboard ───────────────────────────────────────────────────────
         # ── Win rate (must check before generic rows) ────────────────────────
         if r.get("type") == "win_rate":
             rows = r.get("rows", [])
@@ -664,9 +665,15 @@ def _build_answer(question: str, tool_results: list) -> str:
                 parts.append("\n".join(lines))
 
         # ── Matchup ───────────────────────────────────────────────────────────
+        # FIX B: dismiss_rate is a % value, not balls-per-wicket
         elif "matchup" in r:
             m = r["matchup"]
             phase_str = f" ({m['phase']} overs)" if m.get("phase") and m["phase"] != "ALL" else ""
+            dismissed = m.get("dismissed") or 0
+            balls     = m.get("balls") or 0
+            balls_per_wicket = (
+                _fmt(round(balls / dismissed, 1)) if dismissed else "N/A"
+            )
             parts.append(
                 f"**{m['batter']} vs {m['bowler']}** in {m['competition']}{phase_str}:\n"
                 f"- **Balls faced:** {m['balls']}\n"
@@ -674,7 +681,7 @@ def _build_answer(question: str, tool_results: list) -> str:
                 f"- **Dismissals:** {m['dismissed']}\n"
                 f"- **Strike rate:** {_fmt(m.get('sr'))}\n"
                 f"- **Dot ball %:** {_fmt(m.get('dot_pct'))}%\n"
-                f"- **Dismissal rate:** every {_fmt(m.get('dismiss_rate'))} balls"
+                f"- **Dismissal rate:** {_fmt(m.get('dismiss_rate'))}% (once every {balls_per_wicket} balls)"
             )
 
         # ── Batter weaknesses ─────────────────────────────────────────────────
@@ -729,7 +736,6 @@ def _build_answer(question: str, tool_results: list) -> str:
                     f"econ {_fmt(s.get('economy'))}, avg {_fmt(s.get('bowl_avg'))}"
                 )
             parts.append("\n".join(lines))
-
 
         # ── Standings ─────────────────────────────────────────────────────────
         elif "standings" in r:
@@ -818,29 +824,22 @@ def _build_answer(question: str, tool_results: list) -> str:
     return "\n\n".join(parts) if parts else "I don't have data for that."
 
 
-def _extract_chart(tool_name: str, tool_result: dict) -> tuple[str, list]:
+def _extract_chart(tool_name: str, tool_result: dict) -> tuple:
     """Build chart_title and chart_data from tool result."""
+
+    # FIX A: No chart for matchup queries
+    if "matchup" in tool_result:
+        return "", []
+
     if "rows" in tool_result and tool_result["rows"]:
         rows  = tool_result["rows"]
         stat  = tool_result.get("stat", "value")
-        # Win rate rows use 'team' key, leaderboard rows use 'player'
+        # Win rate rows — no chart
         if tool_result.get("type") == "win_rate":
-            return "", []  # No chart for win rate
+            return "", []
         else:
             title = f"Top {len(rows)} — {stat}"
             data  = [{"player": r.get("player", r.get("team", "?")), "value": r["value"]} for r in rows]
-        return title, data
-
-    if "matchup" in tool_result:
-        m = tool_result["matchup"]
-        title = f"{m['batter']} vs {m['bowler']} — {m['competition']} {m['phase']}"
-        data  = [
-            {"player": "Balls",      "value": m["balls"]},
-            {"player": "Runs",       "value": m["runs"]},
-            {"player": "Dismissals", "value": m["dismissed"]},
-            {"player": "Fours",      "value": m["fours"]},
-            {"player": "Sixes",      "value": m["sixes"]},
-        ]
         return title, data
 
     if "weak_against" in tool_result:
@@ -894,10 +893,14 @@ ABSOLUTE RULES — these override everything:
 """
 
 
-# ── Main /ask route ────────────────────────────────────────────────────────────
+# ── Core agent logic (shared by both /ask and /chat) ──────────────────────────
 
-@app.get("/ask")
-def ask(question: str):
+def _run_agent(question: str, conversation_history: list = None) -> dict:
+    """
+    Core agent logic. Accepts a question and optional conversation history
+    (list of {"role": "user"|"assistant", "content": str}).
+    Returns {"answer": str, "chart_title": str, "chart_data": list}.
+    """
     if not dl._loaded:
         try:
             dl.load()
@@ -907,21 +910,22 @@ def ask(question: str):
     chart_title = ""
     chart_data  = []
 
-    # Build conversation history for context
-    context_turns = get_context()
-    history = []
-    for t in context_turns:
-        history.append({"role": "user",      "content": t["question"]})
-        history.append({"role": "assistant", "content": t["answer"]})
+    # Build messages: system + history + current question
+    history_msgs = []
+    if conversation_history:
+        for turn in conversation_history:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role in ("user", "assistant") and content:
+                history_msgs.append({"role": role, "content": content})
 
     messages = (
         [{"role": "system", "content": SYSTEM_PROMPT}]
-        + history
+        + history_msgs
         + [{"role": "user", "content": question}]
     )
 
     # ── Round 1: Let Groq decide which tool(s) to call ────────────────────────
-    # Retry up to 2 times — llama-3.3-70b occasionally generates malformed tool JSON
     response = None
     for attempt in range(2):
         try:
@@ -933,7 +937,7 @@ def ask(question: str):
                 temperature=0.1,
                 max_tokens=1000,
             )
-            break  # success
+            break
         except Exception as e:
             err_str = str(e)
             print(f"Groq round 1 error (attempt {attempt+1}): {err_str}")
@@ -961,19 +965,10 @@ def ask(question: str):
                     print(f"Salvage failed: {salvage_err}")
 
             if attempt == 1 or "tool_use_failed" not in err_str:
-                # Non-retryable or out of retries — fall back to plain answer
-                try:
-                    fallback = groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
-                        messages=messages,
-                        temperature=0.1,
-                        max_tokens=600,
-                    )
-                    answer = fallback.choices[0].message.content.strip()
-                except Exception:
-                    answer = "Sorry, I'm having trouble right now. Please try again."
-                save_context(question, answer)
-                return {"answer": answer, "chart_title": "", "chart_data": []}
+                # FIX C: Hard fallback — never let Groq hallucinate stats
+                # Return "no data" instead of calling Groq with no tool result
+                save_context(question, "I don't have data for that right now.")
+                return {"answer": "I don't have data for that right now. Please try rephrasing your question.", "chart_title": "", "chart_data": []}
 
     if response is None:
         return {"answer": "Sorry, I'm having trouble right now. Please try again.",
@@ -1010,13 +1005,11 @@ def ask(question: str):
             "result":       result,
         })
 
-    # ── Build answer directly from tool results — NO Groq for data answers ──────
-    # Groq cannot reliably copy numbers verbatim. We format directly in Python
-    # and only call Groq Round 2 for pure knowledge questions (no tool results).
+    # ── Build answer directly from tool results ───────────────────────────────
     formatted_results = []
     all_errors = True
     for tr in tool_results:
-        result  = tr["result"]
+        result   = tr["result"]
         readable = _format_tool_result_readable(result)
         formatted_results.append(readable)
         if "error" not in result:
@@ -1053,6 +1046,50 @@ def ask(question: str):
 
     save_context(question, answer)
     return {"answer": answer, "chart_title": chart_title, "chart_data": chart_data}
+
+
+# ── GET /ask — existing endpoint (unchanged, uses in-memory context) ──────────
+
+@app.get("/ask")
+def ask(question: str):
+    context_turns = get_context()
+    history = []
+    for t in context_turns:
+        history.append({"role": "user",      "content": t["question"]})
+        history.append({"role": "assistant",  "content": t["answer"]})
+    return _run_agent(question, conversation_history=history)
+
+
+# ── POST /chat — new endpoint for Next.js integration ────────────────────────
+# Accepts full conversation history from Firebase (stateless on Python side).
+
+class ChatMessage(BaseModel):
+    role: str     # "user" or "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    query: str
+    conversation_history: Optional[List[ChatMessage]] = []
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: List[str] = []
+    metadata: dict = {}
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest):
+    history = [{"role": m.role, "content": m.content} for m in (req.conversation_history or [])]
+    result  = _run_agent(req.query, conversation_history=history)
+    return ChatResponse(
+        answer=result["answer"],
+        sources=[],
+        metadata={
+            "chart_title": result.get("chart_title", ""),
+            "chart_data":  result.get("chart_data", []),
+        }
+    )
 
 
 # ── Other routes (unchanged) ───────────────────────────────────────────────────
