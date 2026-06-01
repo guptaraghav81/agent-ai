@@ -1,0 +1,376 @@
+'use client'
+
+// components/AskAI.tsx
+// Converted from AskSF360.js — identical UI, identical CSS classes.
+// Changes from the standalone version:
+//   • fetch() now calls /api/ask-ai (Next.js route) instead of the Render backend directly
+//   • Firestore onSnapshot listener loads and auto-updates conversation history
+//   • sessionId is stable per page load (crypto.randomUUID)
+//   • Charts removed from this view (text-only for now)
+
+import React, { useState, useRef, useEffect } from 'react'
+import { useSession } from 'next-auth/react'
+import { db } from '@/lib/firebase'
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  Timestamp,
+} from 'firebase/firestore'
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+interface Message {
+  id:        string
+  role:      'user' | 'assistant'
+  content:   string
+  timestamp?: Timestamp
+}
+
+// ── Suggestions ────────────────────────────────────────────────────────────────
+const SUGGESTIONS = [
+  "Who won the first IPL?",
+  "Which player has won the most Orange Cap awards in IPL history?",
+  "Which team has won the highest number of IPL titles?",
+  "Most IPL runs",
+  "Most IPL wickets",
+  "Most IPL sixes",
+  "Compare Kohli vs Rohit",
+]
+
+const pickSuggestions = () => {
+  const shuffled = [...SUGGESTIONS].sort(() => Math.random() - 0.5)
+  return shuffled.slice(0, 3)
+}
+
+// ── Component ──────────────────────────────────────────────────────────────────
+export default function AskAI() {
+  const { data: session } = useSession()
+  const userId = (session?.user as any)?.id as string | undefined
+
+  const [question,    setQuestion]    = useState('')
+  const [messages,    setMessages]    = useState<Message[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [error,       setError]       = useState<string | null>(null)
+  const [suggestions, setSuggestions] = useState(pickSuggestions)
+  const [audioEnabled, setAudioEnabled] = useState(false)
+  const [listening,   setListening]   = useState(false)
+
+  // One session ID per page load — groups messages into a conversation
+  const [sessionId] = useState(() => crypto.randomUUID())
+
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const inputRef    = useRef<HTMLInputElement>(null)
+
+  const isVoiceSupported       = typeof window !== 'undefined' && 'webkitSpeechRecognition' in window
+  const isSpeechOutputSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+  const hasMessages = messages.length > 0
+
+  // ── Firestore real-time listener ───────────────────────────────────────────
+  // Fires automatically when new messages are saved by the API route.
+  // This is the single source of truth for the message list.
+  useEffect(() => {
+    if (!userId) return
+
+    const msgsRef = collection(
+      db,
+      'conversations',
+      userId,
+      'sessions',
+      sessionId,
+      'messages'
+    )
+
+    const q = query(msgsRef, orderBy('timestamp', 'asc'))
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setMessages(
+        snap.docs.map(d => ({ id: d.id, ...d.data() } as Message))
+      )
+    })
+
+    return () => unsubscribe()
+  }, [userId, sessionId])
+
+  // ── Auto-scroll ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight
+    }
+  }, [messages, loading])
+
+  // ── Speech output ──────────────────────────────────────────────────────────
+  const speakText = (text: string) => {
+    if (!isSpeechOutputSupported) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text.replace(/📊.*/, ''))
+    utterance.lang = 'en-IN'
+    window.speechSynthesis.speak(utterance)
+  }
+
+  // ── Send query ─────────────────────────────────────────────────────────────
+  const askAI = async (q: string = question) => {
+    if (!q.trim() || loading) return
+    setLoading(true)
+    setError(null)
+
+    // Snapshot history before the new message
+    const history = messages.map(m => ({ role: m.role, content: m.content }))
+
+    // Optimistically show the user message (Firestore will replace this shortly)
+    setMessages(prev => [...prev, {
+      id:   'optimistic-' + Date.now(),
+      role: 'user',
+      content: q,
+    }])
+    setQuestion('')
+
+    try {
+      const res = await fetch('/api/ask-ai', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ query: q, sessionId, history }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error ?? 'Something went wrong')
+      }
+
+      const data = await res.json()
+
+      if (audioEnabled) speakText(data.answer)
+
+      // Note: we do NOT manually add the AI message here.
+      // The Firestore onSnapshot listener above fires automatically when the
+      // API route saves both messages, and replaces the optimistic message.
+
+    } catch (err: any) {
+      setError(err.message)
+      // Remove optimistic message on error
+      setMessages(prev => prev.filter(m => !m.id.startsWith('optimistic-')))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Voice input ────────────────────────────────────────────────────────────
+  const startVoice = () => {
+    if (!isVoiceSupported) return
+    const SpeechRecognition = (window as any).webkitSpeechRecognition
+    const recognition       = new SpeechRecognition()
+    recognition.lang              = 'en-IN'
+    recognition.continuous        = true
+    recognition.interimResults    = true
+    let finalTranscript           = ''
+    recognition.onstart  = () => setListening(true)
+    recognition.onresult = (e: any) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript
+        e.results[i].isFinal ? (finalTranscript += t) : (interim += t)
+      }
+      setQuestion(finalTranscript + interim)
+    }
+    recognition.onend  = () => {
+      setListening(false)
+      if (finalTranscript.trim()) askAI(finalTranscript)
+    }
+    recognition.onerror = () => setListening(false)
+    recognition.start()
+    setTimeout(() => recognition.stop(), 6000)
+  }
+
+  // ── Render message ─────────────────────────────────────────────────────────
+  const renderMessage = (m: Message, i: number) => {
+    const lines = m.content.split('\n').filter(l => l.trim() !== '')
+
+    const parseBold = (text: string) => {
+      const parts = text.split(/\*\*(.*?)\*\*/g)
+      return parts.map((part, idx) =>
+        idx % 2 === 1 ? <strong key={idx}>{part}</strong> : part
+      )
+    }
+
+    return (
+      <div key={m.id || i} className={`ask-bubble-row ${m.role}`}>
+        {m.role === 'assistant' && (
+          <div className="ask-ai-avatar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="url(#grad)" />
+              <text x="12" y="16" textAnchor="middle" fontSize="10" fill="white">AI</text>
+              <defs>
+                <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%"   stopColor="#f97316" />
+                  <stop offset="100%" stopColor="#ec4899" />
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+        )}
+        <div className={`ask-bubble ${m.role}`}>
+          {lines.map((line, j) => {
+            const isNote      = line.startsWith('📊')
+            const isNumbered  = /^\d+\./.test(line)
+            return (
+              <p key={j} style={{
+                margin:     '3px 0',
+                fontSize:   isNote ? '11px' : isNumbered ? '13px' : '14px',
+                opacity:    isNote ? 0.5 : 1,
+                fontFamily: isNumbered ? "'Courier New', monospace" : 'inherit',
+                lineHeight: 1.6,
+              }}>
+                {parseBold(line)}
+              </p>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // ── JSX ────────────────────────────────────────────────────────────────────
+  return (
+    <div className="ask-page">
+
+      {/* Landing state */}
+      {!hasMessages && (
+        <div className="ask-landing">
+          <h1 className="ask-hero-title">
+            Your AI companion for everything cricket
+          </h1>
+        </div>
+      )}
+
+      {/* Conversation area */}
+      {hasMessages && (
+        <div className="ask-messages" ref={messagesRef}>
+          {messages.map((m, i) => renderMessage(m, i))}
+          {loading && (
+            <div className="ask-bubble-row assistant">
+              <div className="ask-ai-avatar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" fill="url(#grad2)" />
+                  <text x="12" y="16" textAnchor="middle" fontSize="10" fill="white">AI</text>
+                  <defs>
+                    <linearGradient id="grad2" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%"   stopColor="#f97316" />
+                      <stop offset="100%" stopColor="#ec4899" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+              <div className="ask-bubble assistant ask-thinking">
+                <span /><span /><span />
+              </div>
+            </div>
+          )}
+          {error && (
+            <div style={{ color: '#ef4444', fontSize: 13, padding: '4px 16px' }}>
+              {error}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Input area */}
+      <div className="ask-input-area">
+        <div className="ask-input-inner">
+
+          {/* Input bar */}
+          <div className="ask-input-bar">
+            <input
+              ref={inputRef}
+              className="ask-input"
+              value={question}
+              placeholder={listening ? 'Listening...' : 'Ask anything'}
+              onChange={e => setQuestion(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') askAI() }}
+            />
+
+            {/* Audio toggle */}
+            <button
+              className={`ask-mic-btn ${audioEnabled ? 'listening' : ''}`}
+              onClick={() => {
+                setAudioEnabled(v => !v)
+                if (audioEnabled) window.speechSynthesis?.cancel()
+              }}
+              title={audioEnabled ? 'Audio on — click to mute' : 'Audio off — click to enable'}
+            >
+              {audioEnabled ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <line x1="23" y1="9" x2="17" y2="15"/>
+                  <line x1="17" y1="9" x2="23" y2="15"/>
+                </svg>
+              )}
+            </button>
+
+            {/* Voice input */}
+            <button
+              className={`ask-mic-btn ${listening ? 'listening' : ''}`}
+              onClick={startVoice}
+              title="Voice input"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8"  y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+
+            {/* Send */}
+            <button className="ask-send-btn" onClick={() => askAI()} title="Send">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <line x1="5"  y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </button>
+          </div>
+
+          {/* Suggestions — only on landing */}
+          {!hasMessages && (
+            <div className="ask-suggestions">
+              {suggestions.map((s, i) => (
+                <button key={i} className="ask-suggestion" onClick={() => askAI(s)}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                    style={{ flexShrink: 0, opacity: 0.45 }}>
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  {s}
+                </button>
+              ))}
+              <button
+                className="ask-suggestion-refresh"
+                onClick={() => setSuggestions(pickSuggestions())}
+                title="Refresh"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="23 4 23 10 17 10"/>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Clear chat */}
+          {hasMessages && (
+            <button className="ask-clear" onClick={() => setMessages([])}>
+              Clear chat
+            </button>
+          )}
+
+        </div>
+      </div>
+
+    </div>
+  )
+}
