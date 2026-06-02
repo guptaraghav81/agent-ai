@@ -10,4 +10,4 @@ feedparser
 python-dotenv
 pandas 
 openpyxl
-pyarrow
+pyarrowslowapi
