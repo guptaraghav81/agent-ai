@@ -1,70 +1,99 @@
-# Getting Started with Create React App
+# 🏏 SportsFan360 - AI Analytics Backend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Welcome to the AI Analytics Backend for **SportsFan360**. This is a high-performance cricket analytics service powered by **FastAPI**, a robust **Pandas** datalayer loading ball-by-ball datasets, and **Groq (Llama 3.3 70B)** for natural language QA, matchups, trivia, and player statistics.
 
-## Available Scripts
+---
 
-In the project directory, you can run:
+## 🚀 Live Deployment
 
-### `npm start`
+The backend is fully deployed and active in the cloud on Render:
+* **Base URL**: `https://sportsfan360-askai.onrender.com`
+* **Health Check**: `https://sportsfan360-askai.onrender.com/health`
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+---
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## 🛠️ Key Features
 
-### `npm test`
+- 🧠 **Smart Cricket QA**: Natural language question answering backed by a local ball-by-ball database (using Groq).
+- 🎯 **Matchup Analysis**: Advanced head-to-head metrics for batter vs bowler queries.
+- 📈 **Leaderboards**: Orange Cap, Purple Cap, career averages, and season stats dynamically filtered.
+- 📰 **SportsFan Feed**: Integrated news aggregator yielding trending news cards.
+- ⚔️ **Player Battles**: Compare two players with a calculated statistical impact factor.
+- ⚡ **Daily Challenges**: Interactive fan trivia and predictions.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+---
 
-### `npm run build`
+## 📡 API Endpoints
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### 1. General & Health
+* **`GET /`**
+  * Returns home status message.
+  * *Response*: `{"message": "SportsFan360 AI running"}`
+* **`GET /health`**
+  * Health status check.
+  * *Response*: `{"status": "ok"}`
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### 2. AI Queries
+* **`GET /ask?question=<your-question>`**
+  * Submits a question to the AI engine powered by Groq and the local Parquet datalayer.
+  * *Example*: `/ask?question=Who has most IPL runs?`
+  * *Response*: 
+    ```json
+    {
+      "answer": "**V Kohli** won the runs title in **IPL** with **9144 runs**.",
+      "chart_title": "Top 1 — runs",
+      "chart_data": [{"player": "V Kohli", "value": 9144.0}]
+    }
+    ```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### 3. Statistics & Aggregations
+* **`GET /standings`**
+  * Fetch current IPL points table.
+* **`GET /feed`**
+  * Get real-time news and insight cards.
+* **`GET /player-battle?p1=<player1>&p2=<player2>`**
+  * Compares two players and calculates their respective cricket impact ratings.
+* **`GET /daily-challenge`**
+  * Generates questions and trivia options for fans' daily predictions.
 
-### `npm run eject`
+---
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## 💻 Local Development
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### 1. Prereqs
+Ensure you have Python 3.10+ installed.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### 2. Set Up Virtual Environment
+```bash
+# Clone the repository
+git clone https://github.com/guptaraghav81/agent-ai.git
+cd agent-ai/agent-ai
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+# Create a virtual environment
+python3 -m venv venv
 
-## Learn More
+# Activate virtual environment
+source venv/bin/activate
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### 4. Set Environment Variables
+Create a `.env` file in the root of the project:
+```env
+GROQ_API_KEY=your_groq_api_key_here
+```
 
-### Code Splitting
+### 5. Run the Server
+```bash
+uvicorn agent:app --reload --host 0.0.0.0 --port 8000
+```
+Visit `http://localhost:8000` to access the local server.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+---
 
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## 🎨 CORS Integration
+CORS is configured with `allow_origins=["*"]`, enabling instant and secure connection to any frontend framework (Next.js, React, Mobile Apps).
