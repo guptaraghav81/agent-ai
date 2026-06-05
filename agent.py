@@ -88,12 +88,15 @@ def _execute_tool(name: str, args: dict) -> dict:
 
         elif name == "get_season_leaderboard":
             n = args.get("n", 5)
+            season = int(args["season"])
+            if season < 2025:
+                return {"error": f"The database only contains data for the active 2026 players roster. For historical seasons like {season}, please use Google Search grounding fallback to get the correct factual answer."}
             rows = dl.get_season_leaderboard(
-                stat=args["stat"], season=args["season"],
+                stat=args["stat"], season=season,
                 competition=args.get("competition", "IPL"),
                 phase=args.get("phase", "ALL"), n=n
             )
-            result = {"rows": rows, "stat": args["stat"], "season": args["season"],
+            result = {"rows": rows, "stat": args["stat"], "season": season,
                     "competition": args.get("competition","IPL"), "phase": args.get("phase","ALL")}
             if n == 1 and rows:
                 result["winner"] = rows[0]
@@ -651,10 +654,12 @@ def _run_agent(question: str, conversation_history: list = None) -> dict:
     has_leaderboard_keyword = any(x in q_lower for x in ["most", "highest", "leading", "top", "greatest", "maximum", "best", "orange cap", "purple cap", "records", "record"])
     has_stat_keyword = any(x in q_lower for x in ["runs", "run", "wickets", "wicket", "sixes", "six", "fours", "four", "boundaries", "boundary", "strike", "average", "avg", "economy", "scores", "score", "scorer", "taker", "cap", "century", "centuries", "fifties", "fifty", "match", "matches"])
     
-    # If the query is a general leaderboard/records query without specific year/season specified, use search fallback
+    # If the query is a general leaderboard/records query, use search fallback
     if has_leaderboard_keyword and has_stat_keyword:
-        has_year = any(yr in q_lower for yr in ["2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","ipl26","ipl 26","ipl 25","season"])
-        if not has_year:
+        # We only want to use the DB for the current/active seasons (2025/2026/IPL26)
+        has_historical_year = any(yr in q_lower for yr in ["2008","2009","2010","2011","2012","2013","2014","2015","2016","2017","2018","2019","2020","2021","2022","2023","2024"])
+        # If it has a historical year or NO year at all, use search fallback!
+        if has_historical_year or not any(yr in q_lower for yr in ["2025","2026","ipl26","ipl 26","ipl 25","this season"]):
             use_search_fallback = True
 
     tool_results = []
@@ -815,7 +820,7 @@ def chat(request: Request, req: ChatRequest):
 
 @app.get("/")
 def home():
-    return {"message": "SportsFan360 AI running", "version": "v1.0.3-routing-fix"}
+    return {"message": "SportsFan360 AI running", "version": "v1.0.4-historical-seasons-fix"}
 
 @app.get("/health")
 def health():
