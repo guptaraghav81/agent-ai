@@ -815,7 +815,7 @@ def chat(request: Request, req: ChatRequest):
 
 @app.get("/")
 def home():
-    return {"message": "SportsFan360 AI running"}
+    return {"message": "SportsFan360 AI running", "version": "v1.0.3-routing-fix"}
 
 @app.get("/health")
 def health():
