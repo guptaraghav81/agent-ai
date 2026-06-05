@@ -72,6 +72,8 @@ def _execute_tool(name: str, args: dict) -> dict:
             n      = args.get("n", 5)
             prefix = args.get("prefix", "IPL")
             stat   = args["stat"]
+            if prefix.upper() in ["IPL", "OVERALL", "T20I"]:
+                return {"error": f"The database only contains a subset of active roster players. For all-time/overall {prefix} {stat} career leaderboards, please use Google Search grounding fallback to get the correct factual answer."}
             if prefix == "2025":
                 rows = dl.get_season_leaderboard(stat=stat, season=2025, competition="IPL", phase="ALL", n=n)
                 result = {"rows": rows, "stat": stat, "season": 2025, "competition": "IPL", "phase": "ALL"}
@@ -641,14 +643,22 @@ def _run_agent(question: str, conversation_history: list = None) -> dict:
             routing_hack = True
             team1, team2 = teams_found[0], teams_found[1]
 
-    # Pre-check: If query is global/all-time/historical run/wicket/stat rankings, bypass database tool to use Gemini search intelligence directly
+    # Pre-check: If query asks for overall/all-time leaderboards of runs, wickets, or sixes, route directly to Gemini search grounding fallback to prevent database filtering issues
     use_search_fallback = False
     q_lower = question.lower()
-    if "all time" in q_lower or "all-time" in q_lower or "history" in q_lower or "historical" in q_lower or "ever" in q_lower:
-        if "most runs" in q_lower or "highest run" in q_lower or "most wicket" in q_lower or "sixes" in q_lower or "orange cap" in q_lower or "purple cap" in q_lower or "run scorer" in q_lower:
+    
+    # Check for career / all-time leaderboard keywords
+    has_leaderboard_keyword = any(x in q_lower for x in ["most", "highest", "leading", "top", "greatest", "maximum", "best", "orange cap", "purple cap", "records", "record"])
+    has_stat_keyword = any(x in q_lower for x in ["runs", "run", "wickets", "wicket", "sixes", "six", "fours", "four", "boundaries", "boundary", "strike", "average", "avg", "economy", "scores", "score", "scorer", "taker", "cap", "century", "centuries", "fifties", "fifty", "match", "matches"])
+    
+    # If the query is a general leaderboard/records query without specific year/season specified, use search fallback
+    if has_leaderboard_keyword and has_stat_keyword:
+        has_year = any(yr in q_lower for yr in ["2016","2017","2018","2019","2020","2021","2022","2023","2024","2025","2026","ipl26","ipl 26","ipl 25","season"])
+        if not has_year:
             use_search_fallback = True
 
     tool_results = []
+
     if routing_hack:
         # Route manually to bypass LLM tool calling choice logic errors
         print(f"Routing hack triggered: get_team_vs_team({team1}, {team2})")
