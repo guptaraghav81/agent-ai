@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 requests
-groq
+google-genai
 beautifulsoup4
 flask
 flask-cors
