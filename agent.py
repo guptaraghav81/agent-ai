@@ -428,17 +428,15 @@ def _extract_chart(tool_name: str, tool_result: dict) -> tuple:
     return "", []
 
 
-SYSTEM_PROMPT = """You are AskSportsFan360, a cricket analytics assistant backed by a real ball-by-ball database.
+SYSTEM_PROMPT = """You are AskSportsFan360, a premium cricket analytics assistant.
 
-ABSOLUTE RULES — these override everything:
-1. You MUST ONLY report numbers and names that appear VERBATIM in the database results. Copy them exactly.
-2. You MUST NOT use your training knowledge for any statistic, ranking, or player name when querying the database.
-3. You MUST NOT reorder, modify, or supplement the tool result with recalled facts.
-4. If a database tool has rows, report them IN THAT EXACT ORDER with THOSE EXACT NUMBERS.
-5. If a database tool returns empty or error, do NOT try to answer from general knowledge in that step.
-6. For matchup queries, always output the exact stats and specify the number of balls faced.
-7. For ANY question mentioning a specific year (2025, 2024, 2023, 2019 etc.) ALWAYS use get_season_leaderboard with that season year — NEVER use get_career_leaderboard for year-specific questions.
+INSTRUCTION RULES:
+1. For specific player matching queries, use the database tools. If the tools return detailed stats, report them accurately.
+2. For global, historical, or "all-time" statistics and queries (like "all-time most runs in IPL", "all-time purple cap winners", etc.), if you see the database tools return values that exclude famous historical figures (e.g. Shikhar Dhawan, David Warner, Chris Gayle), you MUST use your Google Search tool grounding or general knowledge intelligence to deliver a 100% correct, verified all-time factual response.
+3. Combine database tool outputs with your live search/knowledge grounding to ensure the user gets complete and correct sports history.
+4. Bold key names and numbers using **. Make answers professional and concise.
 """
+
 
 
 def _run_agent(question: str, conversation_history: list = None) -> dict:
@@ -643,6 +641,13 @@ def _run_agent(question: str, conversation_history: list = None) -> dict:
             routing_hack = True
             team1, team2 = teams_found[0], teams_found[1]
 
+    # Pre-check: If query is global/all-time/historical run/wicket/stat rankings, bypass database tool to use Gemini search intelligence directly
+    use_search_fallback = False
+    q_lower = question.lower()
+    if "all time" in q_lower or "all-time" in q_lower or "history" in q_lower or "historical" in q_lower or "ever" in q_lower:
+        if "most runs" in q_lower or "highest run" in q_lower or "most wicket" in q_lower or "sixes" in q_lower or "orange cap" in q_lower or "purple cap" in q_lower or "run scorer" in q_lower:
+            use_search_fallback = True
+
     tool_results = []
     if routing_hack:
         # Route manually to bypass LLM tool calling choice logic errors
@@ -652,6 +657,24 @@ def _run_agent(question: str, conversation_history: list = None) -> dict:
         answer = _build_answer(question, tool_results)
         save_context(question, answer)
         return {"answer": answer, "chart_title": "", "chart_data": []}
+
+    if use_search_fallback:
+        print("Historical query detected. Routing directly to Gemini Search Grounding fallback...")
+        try:
+            fallback_res = client.models.generate_content(
+                model=_MODEL_NAME,
+                contents=all_contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.2
+                )
+            )
+            answer = fallback_res.text.strip()
+            save_context(question, answer)
+            return {"answer": answer, "chart_title": "", "chart_data": []}
+        except Exception as e:
+            print(f"Search fallback failed: {e}")
 
     try:
         # Round 1: Call Gemini with strict DB tools enabled
@@ -664,6 +687,7 @@ def _run_agent(question: str, conversation_history: list = None) -> dict:
                 temperature=0.1,
             )
         )
+
     except Exception as e:
         print(f"Gemini round 1 error: {e}")
         return {"answer": "Sorry, I'm having trouble right now. Please try again.", "chart_title": "", "chart_data": []}
