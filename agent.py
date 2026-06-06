@@ -828,6 +828,27 @@ def chat(request: Request, req: ChatRequest):
 
 # ── Other routes ──────────────────────────────────────────────────────────────
 
+@app.get("/debug-gemini")
+def debug_gemini():
+    try:
+        res = client.models.generate_content(
+            model=_MODEL_NAME,
+            contents="test",
+            config=types.GenerateContentConfig(max_output_tokens=10)
+        )
+        return {"status": "ok", "response": res.text, "project": os.getenv("GCP_PROJECT_ID"), "location": os.getenv("GCP_LOCATION")}
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "error_message": str(e),
+            "traceback": traceback.format_exc(),
+            "gcp_project": os.getenv("GCP_PROJECT_ID"),
+            "gcp_location": os.getenv("GCP_LOCATION"),
+            "creds_file_exists": os.path.exists(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/google_creds.json")),
+            "creds_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        }
+
 @app.get("/")
 def home():
     return {"message": "SportsFan360 AI running", "version": "v1.0.4-historical-seasons-fix"}
