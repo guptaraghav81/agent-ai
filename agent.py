@@ -57,11 +57,9 @@ except Exception as e:
     print("Data layer load failed at startup:", e)
 
 
-# Initialize Gemini client via Vertex AI exactly like sentiment engine
+# Initialize Gemini client via API key (permanent, reliable)
 client = genai.Client(
-    vertexai=True,
-    project=os.getenv("GCP_PROJECT_ID", "fleet-gift-498306-p7"),
-    location=os.getenv("GCP_LOCATION", "us-central1")
+    api_key=os.getenv("GEMINI_API_KEY")
 )
 
 _MODEL_NAME = "gemini-2.5-flash"
@@ -811,11 +809,6 @@ class ChatResponse(BaseModel):
 @app.post("/chat", response_model=ChatResponse)
 @limiter.limit("30/minute")
 def chat(request: Request, req: ChatRequest):
-    # API key auth
-    api_key = request.headers.get("x-api-key")
-    expected = os.getenv("INTERNAL_API_KEY")
-    if expected and api_key != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
     history = [{"role": m.role, "content": m.content} for m in (req.conversation_history or [])]
     result  = _run_agent(req.query, conversation_history=history)
