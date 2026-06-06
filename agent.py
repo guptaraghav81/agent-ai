@@ -32,9 +32,19 @@ app.state.limiter = limiter
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"error": "Too many requests. Slow down!"})
 
+origins = [
+    "https://sportsfan360.com",
+    "https://www.sportsfan360.com",
+    "https://ask-ai-two-murex.vercel.app",
+    "https://sportsfan-frontend.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
